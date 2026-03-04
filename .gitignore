@@ -2,8 +2,14 @@ __pycache__/
 *.pyc
 .venv/
 *.log
+
+MariaDB
 MariaDB/
+
 *.db
 config/settings.yaml
+
 .vscode/
 .idea/
+python_code/
+phyton_code/
