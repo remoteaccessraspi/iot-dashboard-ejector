@@ -70,7 +70,7 @@ conversion:
     p5: { source: i5, a: 100.0, b: 300.0 }
     p6: { source: i6, a: 100.0, b: 100.0 }
     p7: { source: i7, a: 100.0, b: 300.0 }
-    p8: { source: i8, a: 100.0, b: 100.0 } 
+    p8: { source: i8, a: 100.0, b: 200.0 } 
 
 # ------------------------
 # RELÉ
@@ -106,15 +106,15 @@ relay:
             from: "06:00"
             to:   "20:00"
           conditions:
-            - { source: i1, min: 10, max: 20, hyst: 1 }
-            - { source: p2, min: 100, max: 200, hyst: 5 }
+            - { source: t1, min: 5, max: 20, hyst: 1 }
+            - { source: p8, min: 110, max: 150, hyst: 1 }
 
         # pravidlo 2 (OR vetva)
         - time:
             from: "06:00"
             to:   "20:00"
           conditions:
-            - { source: p8, min: 150, max: 250, hyst: 10 }
+            - { source: p8, min: 80, max: 130, hyst: 2 }
 
     # ---- R2 MANUAL ----
     r2:
