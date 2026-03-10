@@ -7,7 +7,6 @@ MariaDB
 MariaDB/
 
 *.db
-config/settings.yaml
 
 .vscode/
 .idea/
