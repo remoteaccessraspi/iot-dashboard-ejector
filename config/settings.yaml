@@ -5,12 +5,13 @@ modbus:
   baudrate: 9600
   parity: N
   stopbits: 1
-  timeout_sec: 1
+  timeout_sec: 0.3
 
   slaves:
     temperature_slave_id: 2
     current_slave_id: 3
     opta_slave_id: 1
+    waveshare_relay_slave_id: 4
 
   registers:
     temperature:
@@ -106,7 +107,7 @@ relay:
             from: "06:00"
             to:   "20:00"
           conditions:
-            - { source: t1, min: 5, max: 20, hyst: 1 }
+            - { source: t1, min: 5, max: 30, hyst: 1 }
             - { source: p8, min: 110, max: 150, hyst: 1 }
 
         # pravidlo 2 (OR vetva)

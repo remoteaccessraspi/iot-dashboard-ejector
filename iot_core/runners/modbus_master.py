@@ -7,30 +7,65 @@ from iot_core.modbus.client import create_client
 from iot_core.devices.opta_pid import OptaPID
 from iot_core.devices.temperature import TemperatureDevice
 from iot_core.devices.current_loop import CurrentLoopDevice
+from iot_core.devices.waveshare_relay import WaveshareRelay
 
+
+# --------------------------------------------------
+# CONNECTION HELPERS
+# --------------------------------------------------
+
+def reconnect_client(client):
+
+    for attempt in range(3):
+
+        try:
+
+            print(f"Modbus reconnect attempt {attempt+1}")
+
+            client.close()
+            time.sleep(0.3)
+
+            if client.connect():
+
+                print("Modbus reconnect OK")
+                return True
+
+        except Exception as e:
+
+            print("Reconnect error:", e)
+
+        time.sleep(0.5)
+
+    print("Modbus reconnect FAILED")
+    return False
+
+
+# --------------------------------------------------
+# MAIN
+# --------------------------------------------------
 
 def main():
 
     cfg = load_config()
+
     modbus_cfg = cfg["modbus"]
 
     db_conn = get_connection()
+
     client = create_client()
 
-    timeout = modbus_cfg.get("timeout_sec", 1)
+    timeout = float(modbus_cfg.get("timeout_sec", 0.3))
 
     if hasattr(client, "timeout"):
+
         client.timeout = timeout
-    if hasattr(client, "retries"):
-        client.retries = 0
 
-    if hasattr(client, "connect"):
-        if not client.connect():
-            print("Initial connect failed")
-        else:
-            print("Connected to Modbus")
+    print("Modbus timeout:", timeout)
 
-    # 🔥 Slave IDs zo settings.yaml
+    # --------------------------------------------------
+    # DEVICE CONFIG
+    # --------------------------------------------------
+
     slaves_cfg = modbus_cfg["slaves"]
 
     opta = OptaPID(
@@ -47,68 +82,117 @@ def main():
         reg_cfg=modbus_cfg["registers"]["current_loop"]
     )
 
+    waveshare_relay = WaveshareRelay(
+        slave_id=slaves_cfg["waveshare_relay_slave_id"]
+    )
+
     devices = [
-         opta,          # ID1 – function 04
-        temperature,   # ID2 – function 03
-        current_loop   # ID3 – function 03
+        opta,
+        temperature,
+        current_loop,
+        waveshare_relay
     ]
 
     print(
         f"Modbus Master started "
         f"(ID1={slaves_cfg['opta_slave_id']}, "
         f"ID2={slaves_cfg['temperature_slave_id']}, "
-        f"ID3={slaves_cfg['current_slave_id']})"
+        f"ID3={slaves_cfg['current_slave_id']}, "
+        f"ID4={slaves_cfg['waveshare_relay_slave_id']})"
     )
 
+    print("Devices:", [d.__class__.__name__ for d in devices])
+
+    # --------------------------------------------------
+    # POLL PARAMETERS
+    # --------------------------------------------------
+
     PERIOD = 5.0
-    FRAME_DELAY = 0.1  # 100 ms medzi slave
+    FRAME_DELAY = 0.02
+
+    # --------------------------------------------------
+    # MAIN LOOP
+    # --------------------------------------------------
 
     while True:
 
         cycle_start = time.monotonic()
 
-        # Reconnect ak treba
-        if hasattr(client, "connected") and not client.connected:
-            print("Reconnecting...")
-            try:
-                client.connect()
-            except Exception as e:
-                print("Reconnect failed:", e)
-                time.sleep(1)
-                continue
+        # -------------------------------
+        # DB reconnect
+        # -------------------------------
 
-        # 🔁 Deterministický round-robin
+        try:
+
+            db_conn.ping(reconnect=True)
+
+        except Exception:
+
+            print("Database reconnect")
+
+            db_conn = get_connection()
+
+        # -------------------------------
+        # DEVICE POLLING
+        # -------------------------------
+
         for device in devices:
 
+            name = device.__class__.__name__
+
+            start = time.monotonic()
+
             try:
+
+                print(f"Polling {name}")
+
                 device.execute(client, db_conn)
 
+                latency = (time.monotonic() - start) * 1000
+
+                print(f"{name} OK {latency:.1f} ms")
+
             except Exception as e:
-                print(f"{device.__class__.__name__} error:", e)
 
-                try:
-                    client.close()
-                except Exception:
-                    pass
+                latency = (time.monotonic() - start) * 1000
 
-                time.sleep(0.2)
+                print(f"{name} ERROR {latency:.1f} ms -> {e}")
 
-                try:
-                    client.connect()
-                except Exception as e2:
-                    print("Reconnect after error failed:", e2)
+                reconnect_client(client)
 
             time.sleep(FRAME_DELAY)
 
-        # Stabilná perióda cyklu
+        # -------------------------------
+        # STABLE CYCLE TIMING
+        # -------------------------------
+
         elapsed = time.monotonic() - cycle_start
+
         sleep_time = PERIOD - elapsed
 
         if sleep_time > 0:
+
             time.sleep(sleep_time)
+
         else:
+
             print("Cycle overrun:", round(-sleep_time, 3), "s")
 
 
+# --------------------------------------------------
+# ENTRY POINT
+# --------------------------------------------------
+
 if __name__ == "__main__":
-    main()
+
+    try:
+
+        main()
+
+    except KeyboardInterrupt:
+
+        print("Modbus master stopped")
+
+    except Exception as e:
+
+        print("Fatal error:", e)
