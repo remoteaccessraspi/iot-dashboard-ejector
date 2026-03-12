@@ -2,8 +2,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
+
 import yaml
 import pymysql
 
@@ -53,26 +55,47 @@ def db_connect():
     )
 
 def latest_row(table):
+
+    conn = None
+
     try:
+
         conn = db_connect()
+
         with conn.cursor() as cur:
             cur.execute(f"SELECT * FROM `{table}` ORDER BY id DESC LIMIT 1")
             return cur.fetchone()
+
     except:
         return None
 
+    finally:
+        if conn:
+            conn.close()
+
 def latest_ts(table):
+
+    conn = None
+
     try:
+
         conn = db_connect()
+
         with conn.cursor() as cur:
+
             cur.execute(f"SELECT ts FROM `{table}` ORDER BY id DESC LIMIT 1")
+
             row = cur.fetchone()
+
             if row and row.get("ts"):
                 return row["ts"]
+
     except:
         return None
+
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 # --------------------------------------------------
 # CHANNEL UTIL
@@ -86,12 +109,13 @@ def build_channel_cfg(prefix):
     units = []
 
     for i in range(1,9):
+
         ch = channels.get(f"{prefix}{i}", {})
+
         names.append(ch.get("name", f"{prefix}{i}"))
-        units.append(ch.get("unit", ""))
+        units.append(ch.get("unit",""))
 
     return names, units
-
 
 def pick(row, prefix):
 
@@ -115,7 +139,6 @@ def monitor(request: Request):
         }
     )
 
-
 @app.get("/control", response_class=HTMLResponse)
 def control_page(request: Request):
 
@@ -125,6 +148,38 @@ def control_page(request: Request):
             "request": request,
             "pwm": _cfg.get("pwm", {}),
             "pid": _cfg.get("pid", {})
+        }
+    )
+
+@app.get("/relay", response_class=HTMLResponse)
+def relay_page(request: Request):
+
+    return templates.TemplateResponse(
+        "relay.html",
+        {
+            "request": request,
+            "refresh_ms": _refresh_ms
+        }
+    )
+
+# --------------------------------------------------
+# GRAPH PAGE
+# --------------------------------------------------
+
+@app.get("/graph", response_class=HTMLResponse)
+def graph_page(request: Request):
+
+    t_names, t_units = build_channel_cfg("t")
+    p_names, p_units = build_channel_cfg("p")
+
+    return templates.TemplateResponse(
+        "graph.html",
+        {
+            "request": request,
+            "t_names": t_names,
+            "t_units": t_units,
+            "p_names": p_names,
+            "p_units": p_units
         }
     )
 
@@ -172,7 +227,7 @@ def api_latest():
     relay_names_cfg = relay_cfg.get("names", {})
     relay_count = relay_cfg.get("count", 8)
 
-    relay_states = {f"r{i}":0 for i in range(1, relay_count+1)}
+    relay_states = {f"r{i}":0 for i in range(1,relay_count+1)}
 
     try:
 
@@ -237,21 +292,6 @@ def api_latest():
     }
 
 # --------------------------------------------------
-# RELAY PAGE
-# --------------------------------------------------
-
-@app.get("/relay", response_class=HTMLResponse)
-def relay_page(request: Request):
-
-    return templates.TemplateResponse(
-        "relay.html",
-        {
-            "request": request,
-            "refresh_ms": _refresh_ms
-        }
-    )
-
-# --------------------------------------------------
 # RELAY CONTROL
 # --------------------------------------------------
 
@@ -290,7 +330,7 @@ async def api_relay_set(data: dict):
     return {"status":"OK"}
 
 # --------------------------------------------------
-# CONTROL
+# CONTROL API
 # --------------------------------------------------
 
 @app.get("/api/control/latest")
@@ -328,3 +368,66 @@ def api_control_latest():
         pass
 
     return result
+
+# --------------------------------------------------
+# GRAPH HISTORY API
+# --------------------------------------------------
+
+@app.get("/api/history")
+def api_history(table: str, channel: str, hours: int = 24):
+
+    allowed_tables=[
+        "temperature",
+        "current_loop",
+        "conversion_table"
+    ]
+
+    if table not in allowed_tables:
+        return {"error":"invalid table"}
+
+    if channel not in [
+        "t1","t2","t3","t4","t5","t6","t7","t8",
+        "i1","i2","i3","i4","i5","i6","i7","i8",
+        "p1","p2","p3","p4","p5","p6","p7","p8"
+    ]:
+        return {"error":"invalid channel"}
+
+    start = datetime.now() - timedelta(hours=hours)
+
+    conn=None
+
+    try:
+
+        conn=db_connect()
+
+        with conn.cursor() as cur:
+
+            query=f"""
+            SELECT ts, `{channel}`
+            FROM `{table}`
+            WHERE ts >= %s
+            ORDER BY ts
+            """
+
+            cur.execute(query,(start,))
+
+            rows=cur.fetchall()
+
+        data=[]
+
+        for r in rows:
+
+            if r[channel] is None:
+                continue
+
+            data.append({
+                "t": r["ts"].strftime("%H:%M:%S"),
+                "v": float(r[channel])
+            })
+
+        return data
+
+    finally:
+
+        if conn:
+            conn.close()
