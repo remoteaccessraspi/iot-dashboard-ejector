@@ -13,6 +13,7 @@ async function fetchJSON(url){
 // =====================================================
 
 function fmt(v, unit=null){
+
   if (v === null || v === undefined) return null;
   if (typeof v !== "number") return String(v);
   if (!Number.isFinite(v)) return String(v);
@@ -20,8 +21,22 @@ function fmt(v, unit=null){
   if(unit === "Pa") return v.toFixed(0);
   if(unit === "kPa") return v.toFixed(1);
   if(unit === "bar") return v.toFixed(3);
+  if(unit === "mA") return v.toFixed(2);
 
   return v.toFixed(1);
+}
+
+// názov kanálu – NA alebo "" = nepripojený
+function safeName(name){
+
+  if(name === undefined || name === null) return null;
+
+  if(typeof name === "string"){
+    const n = name.trim().toLowerCase();
+    if(n === "" || n === "na") return null;
+  }
+
+  return name;
 }
 
 // =====================================================
@@ -34,8 +49,10 @@ function parseTime(str){
 }
 
 function isStale(dbTimeStr, serverTimeStr, thresholdSec=10){
+
   const dbTime = parseTime(dbTimeStr);
   const srvTime = parseTime(serverTimeStr);
+
   if(!dbTime || !srvTime) return false;
 
   const diff = (srvTime - dbTime) / 1000;
@@ -43,7 +60,7 @@ function isStale(dbTimeStr, serverTimeStr, thresholdSec=10){
 }
 
 // =====================================================
-// GENERIC TABLE (t, i, p)
+// GENERIC TABLE (T, I, P)
 // =====================================================
 
 function renderTable(el, names, values, units=null){
@@ -55,9 +72,13 @@ function renderTable(el, names, values, units=null){
     return;
   }
 
+  let visible = 0;
+
   for(let i=0;i<values.length;i++){
 
-    const label = names && names[i] ? names[i] : ("Ch" + (i+1));
+    const label = names ? safeName(names[i]) : `CH${i+1}`;
+    if(label === null) continue;
+
     const unit = (units && units[i]) ? units[i] : null;
 
     const v = fmt(values[i], unit);
@@ -68,6 +89,16 @@ function renderTable(el, names, values, units=null){
       <tr>
         <td style="text-align:left">${label}</td>
         <td>${vtxt}${unitTxt}</td>
+      </tr>
+    `;
+
+    visible++;
+  }
+
+  if(visible === 0){
+    html += `
+      <tr>
+        <td colspan="2">No sensors</td>
       </tr>
     `;
   }
@@ -85,6 +116,7 @@ function renderRelayTable(el, names, states, modes){
   if(!tbody) return;
 
   let html = "";
+  let visible = 0;
 
   if(!states || !Array.isArray(states)){
     tbody.innerHTML = html;
@@ -93,7 +125,9 @@ function renderRelayTable(el, names, states, modes){
 
   for(let i=0;i<states.length;i++){
 
-    const name = names && names[i] ? names[i] : ("r" + (i+1));
+    const name = names ? safeName(names[i]) : `R${i+1}`;
+    if(name === null) continue;
+
     const state = states[i] === 1;
     const mode = modes && modes[i] ? modes[i] : "manual";
 
@@ -112,6 +146,16 @@ function renderRelayTable(el, names, states, modes){
         <td>${modeTxt}</td>
       </tr>
     `;
+
+    visible++;
+  }
+
+  if(visible === 0){
+    html += `
+      <tr>
+        <td colspan="3">No relays</td>
+      </tr>
+    `;
   }
 
   tbody.innerHTML = html;
@@ -122,13 +166,14 @@ function renderRelayTable(el, names, states, modes){
 // =====================================================
 
 function setDb(status){
+
   const el = document.getElementById("dbStatus");
   if(!el) return;
 
   if(status === "OK"){
     el.textContent = "OK";
     el.className = "pill ok";
-  } else {
+  }else{
     el.textContent = status || "ERR";
     el.className = "pill bad";
   }
@@ -139,6 +184,7 @@ function setDb(status){
 // =====================================================
 
 async function tick(){
+
   try{
 
     const data = await fetchJSON("/api/latest");
@@ -160,7 +206,9 @@ async function tick(){
     const iLast = document.getElementById("iLastDb");
 
     if(tLast){
+
       tLast.textContent = data.t_last_db || "-";
+
       if(isStale(data.t_last_db, data.server_time)){
         tLast.style.color = "#b00020";
         tLast.style.fontWeight = "700";
@@ -168,10 +216,13 @@ async function tick(){
         tLast.style.color = "";
         tLast.style.fontWeight = "";
       }
+
     }
 
     if(iLast){
+
       iLast.textContent = data.i_last_db || "-";
+
       if(isStale(data.i_last_db, data.server_time)){
         iLast.style.color = "#b00020";
         iLast.style.fontWeight = "700";
@@ -179,6 +230,7 @@ async function tick(){
         iLast.style.color = "";
         iLast.style.fontWeight = "";
       }
+
     }
 
     // --------------------------------------------------
@@ -189,14 +241,14 @@ async function tick(){
       document.getElementById("tTable"),
       data.t_names,
       data.t,
-      data.t_units || null
+      data.t_units
     );
 
     renderTable(
       document.getElementById("iTable"),
-      null,
+      data.i_names,
       data.i,
-      null
+      data.i_units
     );
 
     renderTable(
@@ -213,17 +265,20 @@ async function tick(){
       data.r_modes
     );
 
-  }catch(e){
+  }
+  catch(e){
 
     console.error("Tick error:", e);
 
     const lastUpdate = document.getElementById("lastUpdate");
+
     if(lastUpdate){
       lastUpdate.textContent = "ERROR: " + e.message;
     }
 
     setDb("ERR");
   }
+
 }
 
 // =====================================================

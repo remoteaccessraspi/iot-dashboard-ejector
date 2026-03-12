@@ -47,19 +47,29 @@ channels:
   t3: { name: "Temp 3", unit: "°C" }
   t4: { name: "Temp 4", unit: "°C" }
   t5: { name: "Temp 5", unit: "°C" }
-  t6: { name: "Temp 6", unit: "°C" }
-  t7: { name: "Temp 7", unit: "°C" }
-  t8: { name: "Temp 8", unit: "°C" }
+  t6: { name: "NA", unit: "°C" }
+  t7: { name: "NA", unit: "°C" }
+  t8: { name: "NA", unit: "°C" }
 
   # --- Tlaky ---
-  p1: { name: "Pressure 1", unit: "Pa" }
-  p2: { name: "Pressure 2", unit: "Pa" }
-  p3: { name: "Pressure 3", unit: "Pa" }
-  p4: { name: "Pressure 4", unit: "Pa" }
+  p1: { name: "NA", unit: "Pa" }
+  p2: { name: "NA", unit: "Pa" }
+  p3: { name: "NA", unit: "Pa" }
+  p4: { name: "NA", unit: "Pa" }
   p5: { name: "Pressure 5", unit: "Pa" }
   p6: { name: "Pressure 6", unit: "Pa" }
   p7: { name: "Pressure 7", unit: "Pa" }
   p8: { name: "Main Tank Pressure", unit: "kPa" }
+
+  # --- Currents ---
+  i1: { name: "na", unit: "mA" }
+  i2: { name: "NA", unit: "mA" }
+  i3: { name: "NA", unit: "mA" }
+  i4: { name: "NA", unit: "mA" }
+  i5: { name: "Loop 4", unit: "mA" }
+  i6: { name: "Loop 3", unit: "mA" }
+  i7: { name: "Heater Current", unit: "mA" }
+  i8: { name: "Pump Current", unit: "mA" }
 
 conversion:
   interval_sec: 1
@@ -87,7 +97,7 @@ relay:
     r5: "Spare 1"
     r6: "Spare 812"
     r7: "Spare 3"
-    r8: "Spare 4"
+    r8: "NA"
      # ----------------------------------------
   # RIADENIE RELÉ
   # ----------------------------------------
