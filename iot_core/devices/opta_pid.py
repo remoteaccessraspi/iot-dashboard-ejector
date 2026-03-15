@@ -6,20 +6,20 @@ import time
 # MODBUS TIMING
 # ==========================================================
 
-MODBUS_GAP = 0.02        # 20 ms medzi rámcami
-READ_WRITE_PAUSE = 0.2   # pauza medzi read a write
+MODBUS_GAP = 0.02
+READ_WRITE_PAUSE = 0.15
 
 
 # ==========================================================
-# READ FALLBACK (pymodbus kompatibilita)
+# READ FALLBACK
 # ==========================================================
 
 def _call_read_with_fallback(fn, address: int, count: int, unit_id: int):
 
     tries = [
-        ((), {"address": address, "count": count, "device_id": unit_id}),
         ((), {"address": address, "count": count, "unit": unit_id}),
         ((), {"address": address, "count": count, "slave": unit_id}),
+        ((), {"address": address, "count": count, "device_id": unit_id}),
         ((address, count, unit_id), {}),
         ((address, count), {"unit": unit_id}),
         ((address, count), {"slave": unit_id}),
@@ -39,45 +39,47 @@ def _call_read_with_fallback(fn, address: int, count: int, unit_id: int):
 
 
 # ==========================================================
-# WRITE MULTIPLE COILS
+# WRITE COILS
 # ==========================================================
 
 def _call_write_coils_with_fallback(client, address, values, slave_id):
 
-    try:
+    tries = [
+        lambda: client.write_coils(address, values, unit=slave_id),
+        lambda: client.write_coils(address, values, slave=slave_id),
+        lambda: client.write_coils(address, values, device_id=slave_id),
+        lambda: client.write_coils(address, values, slave_id),
+    ]
+
+    for fn in tries:
         try:
-            return client.write_coils(address, values, unit=slave_id)
+            return fn()
         except TypeError:
-            try:
-                return client.write_coils(address, values, slave=slave_id)
-            except TypeError:
-                try:
-                    return client.write_coils(address, values, device_id=slave_id)
-                except TypeError:
-                    return client.write_coils(address, values, slave_id)
-    except Exception as e:
-        raise e
+            pass
+
+    raise RuntimeError("write_coils fallback failed")
 
 
 # ==========================================================
-# WRITE HOLDING REGISTERS
+# WRITE REGISTERS
 # ==========================================================
 
 def _call_write_with_fallback(client, address, values, slave_id):
 
-    try:
+    tries = [
+        lambda: client.write_registers(address, values, unit=slave_id),
+        lambda: client.write_registers(address, values, slave=slave_id),
+        lambda: client.write_registers(address, values, device_id=slave_id),
+        lambda: client.write_registers(address, values, slave_id),
+    ]
+
+    for fn in tries:
         try:
-            return client.write_registers(address, values, unit=slave_id)
+            return fn()
         except TypeError:
-            try:
-                return client.write_registers(address, values, slave=slave_id)
-            except TypeError:
-                try:
-                    return client.write_registers(address, values, device_id=slave_id)
-                except TypeError:
-                    return client.write_registers(address, values, slave_id)
-    except Exception as e:
-        raise e
+            pass
+
+    raise RuntimeError("write_registers fallback failed")
 
 
 # ==========================================================
@@ -89,11 +91,11 @@ class OptaPID(BaseDevice):
     def __init__(self, slave_id):
         super().__init__(slave_id)
 
-    def execute(self, client, db_conn):
+    def execute(self, client, db_conn, ts):
 
-        # ==========================================================
-        # 1️⃣ READ INPUT REGISTERS
-        # ==========================================================
+        # ======================================================
+        # 1 READ INPUT REGISTERS
+        # ======================================================
 
         try:
             rr = _call_read_with_fallback(
@@ -116,45 +118,48 @@ class OptaPID(BaseDevice):
 
         regs = rr.registers
 
-        # signed conversion
+        # convert signed
         regs = [(v - 0x10000 if v >= 0x8000 else v) for v in regs]
 
         feedback = regs[0] / 10.0
         current_duty = regs[1] / 10.0
 
+        # ======================================================
+        # DB WRITE FEEDBACK
+        # ======================================================
+
         try:
+
             with db_conn.cursor() as cur:
 
-                cur.execute("""
+                cur.executemany(
+                    """
                     REPLACE INTO relay_state(name,state,source)
-                    VALUES ('pid_feedback', %s, 'opta')
-                """, (feedback,))
-
-                cur.execute("""
-                    REPLACE INTO relay_state(name,state,source)
-                    VALUES ('pwm_output', %s, 'opta')
-                """, (current_duty,))
+                    VALUES (%s,%s,'opta')
+                    """,
+                    [
+                        ('pid_feedback', feedback),
+                        ('pwm_output', current_duty)
+                    ]
+                )
 
         except Exception as e:
             print("OPTA DB error (read):", e)
 
-        # ==========================================================
-        # PAUZA READ → WRITE
-        # ==========================================================
-
         time.sleep(READ_WRITE_PAUSE)
 
-        # ==========================================================
-        # 2️⃣ READ CONTROL PARAMETERS
-        # ==========================================================
+        # ======================================================
+        # 2 READ CONTROL PARAMETERS
+        # ======================================================
 
         params = {}
 
         try:
+
             with db_conn.cursor() as cur:
 
                 cur.execute("""
-                    SELECT parameter, value
+                    SELECT parameter,value
                     FROM control
                     WHERE parameter IN (
                         'pwm_period',
@@ -168,22 +173,26 @@ class OptaPID(BaseDevice):
 
                 rows = cur.fetchall()
 
+                for row in rows:
+
+                    param = row["parameter"]
+                    value = row["value"]
+
+                    if param not in params:
+                        params[param] = value
+
         except Exception as e:
             print("OPTA DB error (control read):", e)
             return
 
-        for param, value in rows:
-            if param not in params:
-                params[param] = value
-
         try:
 
-            pwm_period = int(float(params.get("pwm_period", 0) or 0))
-            pwm_duty   = int(float(params.get("pwm_duty", 0) or 0))
+            pwm_period = int(float(params.get("pwm_period", 0)))
+            pwm_duty = int(float(params.get("pwm_duty", 0)))
 
-            t_set      = float(params.get("pid_t_set", 0) or 0)
-            t_full     = int(float(params.get("pid_t_full", 0) or 0))
-            t_move     = int(float(params.get("pid_t_move", 0) or 0))
+            t_set = float(params.get("pid_t_set", 0))
+            t_full = int(float(params.get("pid_t_full", 0)))
+            t_move = int(float(params.get("pid_t_move", 0)))
 
         except Exception as e:
             print("OPTA parameter conversion error:", e)
@@ -196,40 +205,42 @@ class OptaPID(BaseDevice):
             pwm_duty,
             t_set_scaled,
             t_full,
-            t_move,
+            t_move
         ]
 
-        # ==========================================================
-        # 3️⃣ READ COIL STATES FROM DATABASE
-        # ==========================================================
+        # ======================================================
+        # 3 READ COIL STATES
+        # ======================================================
 
-        coil_values = {}
+        enable_pwm = True
+        enable_pid = True
 
         try:
+
             with db_conn.cursor() as cur:
 
                 cur.execute("""
-                    SELECT name, state
+                    SELECT name,state
                     FROM relay_state
                     WHERE name IN ('r1','r2')
                 """)
 
                 rows = cur.fetchall()
 
-                # tuple unpacking (funguje vždy)
-                for name, state in rows:
-                    coil_values[name] = state
+                for row in rows:
+
+                    if row["name"] == "r1":
+                        enable_pwm = bool(row["state"])
+
+                    if row["name"] == "r2":
+                        enable_pid = bool(row["state"])
 
         except Exception as e:
             print("OPTA DB error (coil read):", e)
 
-        # bezpečný default
-        enable_pwm = bool(coil_values.get("r1", 1))
-        enable_pid = bool(coil_values.get("r2", 1))
-
-        # ==========================================================
-        # 4️⃣ WRITE COILS (FC15)
-        # ==========================================================
+        # ======================================================
+        # 4 WRITE COILS
+        # ======================================================
 
         try:
 
@@ -248,9 +259,9 @@ class OptaPID(BaseDevice):
 
         time.sleep(MODBUS_GAP)
 
-        # ==========================================================
-        # 5️⃣ WRITE HOLDING REGISTERS
-        # ==========================================================
+        # ======================================================
+        # 5 WRITE HOLDING REGISTERS
+        # ======================================================
 
         try:
 
@@ -268,3 +279,28 @@ class OptaPID(BaseDevice):
         if hasattr(wr, "isError") and wr.isError():
             print("OPTA write error:", wr)
             return
+
+        # ======================================================
+        # 6 UPDATE CONTROL STATE
+        # ======================================================
+
+        try:
+
+            with db_conn.cursor() as cur:
+
+                cur.executemany(
+                    """
+                    REPLACE INTO control_state(parameter,value,source)
+                    VALUES (%s,%s,'opta')
+                    """,
+                    [
+                        ('pwm_period', pwm_period),
+                        ('pwm_duty', pwm_duty),
+                        ('pid_t_set', t_set),
+                        ('pid_t_full', t_full),
+                        ('pid_t_move', t_move)
+                    ]
+                )
+
+        except Exception as e:
+            print("OPTA DB error (control_state write):", e)

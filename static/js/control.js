@@ -1,24 +1,36 @@
 /* ================= UTIL ================= */
 
 async function fetchJSON(url){
-  try {
+
+  try{
+
     const r = await fetch(url);
+
     if(!r.ok){
       throw new Error("HTTP " + r.status);
     }
+
     return await r.json();
-  } catch(err){
+
+  }catch(err){
+
     console.error("Fetch failed:", err);
     return {};
+
   }
 }
 
-async function postData(url, data){
-  try {
-    const r = await fetch(url, {
+
+async function postData(url,data){
+
+  try{
+
+    const r = await fetch(url,{
       method:"POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify(data)
+      headers:{
+        "Content-Type":"application/json"
+      },
+      body:JSON.stringify(data)
     });
 
     if(!r.ok){
@@ -27,31 +39,50 @@ async function postData(url, data){
 
     return await r.json();
 
-  } catch(err){
+  }catch(err){
+
     console.error("POST error:", err);
-    return { status: "ERROR", detail: err.message };
+
+    return {
+      status:"error",
+      detail:err.message
+    };
+
   }
 }
+
 
 /* ================= SAFE HELPERS ================= */
 
 function getValueSafe(id){
+
   const el = document.getElementById(id);
+
   if(!el){
-    console.warn("Missing element:", id);
+    console.warn("Missing element:",id);
     return null;
   }
+
   return el.value;
 }
 
-function setValueSafe(id, value){
+
+function setValueSafe(id,value){
+
   const el = document.getElementById(id);
+
   if(!el){
-    console.warn("Missing element:", id);
+    console.warn("Missing element:",id);
     return;
   }
+
+  if(document.activeElement === el){
+    return;
+  }
+
   el.value = value ?? "";
 }
+
 
 /* ================= LOAD VALUES ================= */
 
@@ -61,45 +92,79 @@ async function loadControlValues(){
     return;
   }
 
-  const data = await fetchJSON("/api/control/latest");
+  const data = await fetchJSON("/api/latest");
 
-  setValueSafe("pwm_period", data.pwm_period);
-  setValueSafe("pwm_duty", data.pwm_duty);
+  if(!data.control_state){
+    console.warn("control_state missing in API");
+    return;
+  }
 
-  setValueSafe("pid_t_set", data.pid_t_set);
-  setValueSafe("pid_t_full", data.pid_t_full);
-  setValueSafe("pid_t_move", data.pid_t_move);
+  const ctrl = data.control_state;
+
+  setValueSafe("pwm_period", ctrl.pwm_period?.value);
+  setValueSafe("pwm_duty",   ctrl.pwm_duty?.value);
+
+  setValueSafe("pid_t_set",  ctrl.pid_t_set?.value);
+  setValueSafe("pid_t_full", ctrl.pid_t_full?.value);
+  setValueSafe("pid_t_move", ctrl.pid_t_move?.value);
 }
+
 
 /* ================= SAVE ALL ================= */
 
 async function saveAll(){
 
-  const period = Number(getValueSafe("pwm_period"));
-  const duty   = Number(getValueSafe("pwm_duty"));
+  const pwm_period = Number(getValueSafe("pwm_period"));
+  const pwm_duty   = Number(getValueSafe("pwm_duty"));
 
-  const t_set  = Number(getValueSafe("pid_t_set"));
-  const t_full = Number(getValueSafe("pid_t_full"));
-  const t_move = Number(getValueSafe("pid_t_move"));
+  const pid_t_set  = Number(getValueSafe("pid_t_set"));
+  const pid_t_full = Number(getValueSafe("pid_t_full"));
+  const pid_t_move = Number(getValueSafe("pid_t_move"));
 
-  const result = await postData("/api/control/save_all", {
-    period: period,
-    duty: duty,
-    t_set: t_set,
-    t_full: t_full,
-    t_move: t_move
+  const result = await postData("/api/control/save_all",{
+
+    pwm_period: pwm_period,
+    pwm_duty: pwm_duty,
+
+    pid_t_set: pid_t_set,
+    pid_t_full: pid_t_full,
+    pid_t_move: pid_t_move
+
   });
 
-  if(result.status === "OK"){
+  if(result.status === "ok"){
+
     alert("Control values saved");
-  } else {
+
+  }else{
+
     alert("ERROR saving control values");
     console.error(result);
+
   }
+
 }
+
+
+/* ================= AUTO REFRESH ================= */
+
+function startAutoRefresh(){
+
+  loadControlValues();
+
+  setInterval(function(){
+
+    loadControlValues();
+
+  },2000);
+
+}
+
 
 /* ================= INIT ================= */
 
-document.addEventListener("DOMContentLoaded", function() {
-  loadControlValues();
+document.addEventListener("DOMContentLoaded",function(){
+
+  startAutoRefresh();
+
 });

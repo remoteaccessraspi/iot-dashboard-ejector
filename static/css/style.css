@@ -240,3 +240,27 @@ button {
     font-size: 1.45rem;
   }
 }
+/* ============================= */
+/* GRAPH BUTTONS */
+/* ============================= */
+
+.btn-live {
+  background: #2979ff;
+  color: white;
+  transition: background 0.2s ease;
+}
+
+.btn-live:hover {
+  background: #1e5ed8;
+}
+
+/* LIVE MODE ACTIVE */
+
+.btn-live-active {
+  background: #616161;   /* sivá – LIVE režim */
+  color: #ffffff;
+}
+
+.btn-live-active:hover {
+  background: #616161;   /* zostáva sivá */
+}

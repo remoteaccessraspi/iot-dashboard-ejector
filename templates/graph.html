@@ -1,5 +1,6 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
+
 <head>
 
 <meta charset="utf-8">
@@ -7,7 +8,10 @@
 
 <link rel="stylesheet" href="{{ request.url_for('static', path='css/style.css') }}">
 
+<!-- Chart.js -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+
+<!-- Zoom plugin -->
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
 
 <style>
@@ -36,7 +40,9 @@ font-size:20px;
 
 <div class="graph-controls" style="display:flex;flex-wrap:wrap;gap:40px;margin-bottom:20px">
 
+<!-- TEMPERATURE -->
 <div>
+
 <b>Temperature</b><br>
 
 {% for name in t_names %}
@@ -51,7 +57,10 @@ font-size:20px;
 
 </div>
 
+
+<!-- PRESSURE -->
 <div>
+
 <b>Pressure</b><br>
 
 {% for name in p_names %}
@@ -66,20 +75,40 @@ font-size:20px;
 
 </div>
 
+
+<!-- RANGE -->
 <div>
 
 <b>Range</b><br>
 
-<select id="hours" style="font-size:20px">
-<option value="1">1h</option>
-<option value="6">6h</option>
-<option value="12">12h</option>
-<option value="24" selected>24h</option>
+<select id="range" style="font-size:20px">
+
+<option value="5m">5 min</option>
+<option value="10m">10 min</option>
+
+<option value="1h">1 h</option>
+<option value="6h">6 h</option>
+<option value="12h">12 h</option>
+<option value="24h" selected>24 h</option>
+
 </select>
 
 <br><br>
 
-<button onclick="loadGraph()" style="font-size:20px;padding:6px 12px">Load</button>
+<button onclick="loadGraph()" style="font-size:20px;padding:8px 18px">
+Load
+</button>
+
+<br><br>
+
+<button id="btnLive"
+        class="btn-live"
+        onclick="toggleLive()"
+        style="font-size:20px;padding:8px 18px">
+
+LIVE
+
+</button>
 
 </div>
 
@@ -91,289 +120,8 @@ font-size:20px;
 
 </div>
 
-<script>
-
-Chart.register(ChartZoom)
-
-let chart=null
-
-//--------------------------------------------------
-// MEDIAN FILTER
-//--------------------------------------------------
-
-function medianFilter(data,window=5){
-
-const half=Math.floor(window/2)
-let result=[]
-
-for(let i=0;i<data.length;i++){
-
-let arr=[]
-
-for(let j=i-half;j<=i+half;j++){
-
-if(j>=0 && j<data.length)
-arr.push(data[j])
-
-}
-
-arr.sort((a,b)=>a-b)
-result.push(arr[Math.floor(arr.length/2)])
-
-}
-
-return result
-
-}
-
-//--------------------------------------------------
-// AUTOSCALE
-//--------------------------------------------------
-
-function autoScale(minVal,maxVal){
-
-if(!isFinite(minVal) || !isFinite(maxVal))
-return {min:0,max:1}
-
-let minScaled = minVal>=0 ? minVal*0.8 : minVal*1.2
-let maxScaled = maxVal>=0 ? maxVal*1.2 : maxVal*0.8
-
-let range=maxScaled-minScaled
-
-let minRange=Math.max(Math.abs(maxVal-minVal)*0.1,0.5)
-
-if(range<minRange){
-
-let center=(maxVal+minVal)/2
-minScaled=center-minRange/2
-maxScaled=center+minRange/2
-
-}
-
-return {min:minScaled,max:maxScaled}
-
-}
-
-//--------------------------------------------------
-// SELECTED CHANNELS
-//--------------------------------------------------
-
-function getSelected(prefix){
-
-let result=[]
-
-document.querySelectorAll("input[type=checkbox]").forEach(cb=>{
-
-if(cb.checked && cb.value.startsWith(prefix))
-result.push(cb.value)
-
-})
-
-return result
-
-}
-
-//--------------------------------------------------
-// LOAD SERIES
-//--------------------------------------------------
-
-async function loadSeries(channel,hours){
-
-let table="temperature"
-
-if(channel.startsWith("p"))
-table="conversion_table"
-
-if(channel.startsWith("i"))
-table="current_loop"
-
-let url=`/api/history?table=${table}&channel=${channel}&hours=${hours}`
-
-let r=await fetch(url,{cache:"no-store"})
-
-return await r.json()
-
-}
-
-//--------------------------------------------------
-// LOAD GRAPH
-//--------------------------------------------------
-
-async function loadGraph(){
-
-let hours=document.getElementById("hours").value
-
-let tChannels=getSelected("t")
-let pChannels=getSelected("p")
-
-let datasets=[]
-let labels=[]
-
-let tempMin=Infinity
-let tempMax=-Infinity
-
-let pressMin=Infinity
-let pressMax=-Infinity
-
-//--------------------------------------------------
-// TEMPERATURE
-//--------------------------------------------------
-
-for(const ch of tChannels){
-
-const data=await loadSeries(ch,hours)
-
-let values=data.map(x=>x.v)
-values=medianFilter(values,5)
-
-values.forEach(v=>{
-if(v<tempMin) tempMin=v
-if(v>tempMax) tempMax=v
-})
-
-if(labels.length===0)
-labels=data.map(x=>x.t)
-
-datasets.push({
-label:ch,
-data:values,
-yAxisID:"yTemp",
-pointRadius:0,
-tension:0.2
-})
-
-}
-
-//--------------------------------------------------
-// PRESSURE
-//--------------------------------------------------
-
-for(const ch of pChannels){
-
-const data=await loadSeries(ch,hours)
-
-let values=data.map(x=>x.v)
-values=medianFilter(values,5)
-
-values.forEach(v=>{
-if(v<pressMin) pressMin=v
-if(v>pressMax) pressMax=v
-})
-
-if(labels.length===0)
-labels=data.map(x=>x.t)
-
-datasets.push({
-label:ch,
-data:values,
-yAxisID:"yPress",
-pointRadius:0,
-tension:0.2
-})
-
-}
-
-if(chart)
-chart.destroy()
-
-const tempScale=autoScale(tempMin,tempMax)
-const pressScale=autoScale(pressMin,pressMax)
-
-chart=new Chart(document.getElementById("chart"),{
-
-type:"line",
-
-data:{
-labels:labels,
-datasets:datasets
-},
-
-options:{
-
-responsive:true,
-animation:false,
-
-interaction:{
-mode:"index",
-intersect:false
-},
-
-scales:{
-
-yPress:{
-type:"linear",
-position:"left",
-min:pressScale.min,
-max:pressScale.max,
-ticks:{font:{size:20}},
-grid:{lineWidth:1.2}
-},
-
-yTemp:{
-type:"linear",
-position:"right",
-min:tempScale.min,
-max:tempScale.max,
-ticks:{font:{size:20}},
-grid:{lineWidth:1.2}
-},
-
-x:{
-ticks:{
-maxTicksLimit:10,
-font:{size:20}
-},
-grid:{lineWidth:1.2}
-}
-
-},
-
-plugins:{
-
-legend:{
-position:"top",
-labels:{
-font:{size:20}
-}
-},
-
-tooltip:{
-titleFont:{size:20},
-bodyFont:{size:20},
-padding:14
-},
-
-decimation:{
-enabled:true,
-algorithm:"lttb",
-samples:1000
-},
-
-zoom:{
-
-pan:{
-enabled:true,
-mode:"x",
-modifierKey:null
-},
-
-zoom:{
-wheel:{enabled:true},
-pinch:{enabled:true},
-mode:"x"
-}
-
-}
-
-}
-
-}
-
-})
-
-}
-
-</script>
+<!-- Graph logic -->
+<script src="{{ request.url_for('static', path='js/graph.js') }}"></script>
 
 </body>
 </html>

@@ -2,6 +2,7 @@ from iot_core.devices.base_device import BaseDevice
 
 
 def _call_with_fallback(fn, address: int, count: int, unit_id: int):
+
     tries = [
         ((), {"address": address, "count": count, "device_id": unit_id}),
         ((), {"address": address, "count": count, "unit": unit_id}),
@@ -12,6 +13,7 @@ def _call_with_fallback(fn, address: int, count: int, unit_id: int):
     ]
 
     last = None
+
     for args, kwargs in tries:
         try:
             if args:
@@ -26,10 +28,13 @@ def _call_with_fallback(fn, address: int, count: int, unit_id: int):
 class TemperatureDevice(BaseDevice):
 
     def __init__(self, slave_id, reg_cfg):
+
         super().__init__(slave_id)
+
         self.reg_cfg = reg_cfg
 
-    def execute(self, client, db_conn):
+
+    def execute(self, client, db_conn, ts):
 
         try:
             rr = _call_with_fallback(
@@ -56,32 +61,39 @@ class TemperatureDevice(BaseDevice):
 
         regs = rr.registers
 
-        # Signed conversion
+        # signed conversion
         if self.reg_cfg.get("signed", False):
             regs = [(v - 0x10000 if v >= 0x8000 else v) for v in regs]
 
         scale = self.reg_cfg["scale"]
 
         temps = []
+
         for v in regs:
+
             val = v * scale
+
             # -999.0 je invalid hodnota z modulu
             if abs(val - (-999.0)) < 1e-6:
                 temps.append(None)
             else:
                 temps.append(val)
 
-        #print("TEMP VALUES TO INSERT:", temps)
+        # doplnenie na 8 kanálov
+        while len(temps) < 8:
+            temps.append(None)
 
         try:
+
             with db_conn.cursor() as cur:
+
                 cur.execute("""
                     INSERT INTO temperature
                     (ts,t1,t2,t3,t4,t5,t6,t7,t8)
-                    VALUES (NOW(),%s,%s,%s,%s,%s,%s,%s,%s)
-                """, temps)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (ts, *temps))
+
         except Exception as e:
+
             print("Temperature DB error:", e)
             return
-
-       # print("Temperature INSERT OK")

@@ -44,7 +44,7 @@ def main():
     db = cfg["database"]
 
     conv = cfg.get("conversion", {})
-    interval = int(conv.get("interval_sec", 1))
+    interval = int(conv.get("interval_sec", 5))
 
     channels = conv.get("channels", {})
 
@@ -105,7 +105,7 @@ def main():
 
                         ps[p_name] = compute_p(currents.get(src), a, b)
 
-                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    ts = row["ts"].replace(microsecond=0)
 
                     with conn.cursor() as cur:
 

@@ -1,14 +1,26 @@
+# Python
 __pycache__/
 *.pyc
+
+# Virtual environment
 .venv/
+
+# Logs
 *.log
 
-MariaDB
-MariaDB/
-
+# Local databases
 *.db
 
+# IDE
 .vscode/
 .idea/
+
+# Temporary development folders
 python_code/
 phyton_code/
+
+# MariaDB runtime files (nie schema!)
+*.ibd
+*.frm
+*.myd
+*.myi

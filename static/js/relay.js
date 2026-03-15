@@ -1,74 +1,105 @@
 async function fetchJSON(url){
-  const r = await fetch(url, {cache: "no-store"});
-  if(!r.ok) throw new Error("HTTP " + r.status);
+  const r = await fetch(url,{cache:"no-store"});
+  if(!r.ok) throw new Error("HTTP "+r.status);
   return await r.json();
 }
 
-async function postJSON(url, data){
-  const r = await fetch(url, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(data)
+async function postJSON(url,data){
+
+  const r = await fetch(url,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(data)
   });
+
   return await r.json();
 }
 
-function renderRelayControl(el, data){
 
-  let html = `
-    <tr>
-      <th>Name</th>
-      <th>State</th>
-      <th>Mode</th>
-      <th>Action</th>
-    </tr>
+/* ================= RENDER ================= */
+
+function renderRelayControl(el,data){
+
+  const relay=data.relay_state;
+
+  if(!relay){
+    el.innerHTML="<tr><td colspan=4>No relay data</td></tr>";
+    return;
+  }
+
+  let html=`
+  <tr>
+    <th>Name</th>
+    <th>State</th>
+    <th>Source</th>
+    <th>Action</th>
+  </tr>
   `;
 
-  for(let i=0;i<data.r.length;i++){
+  for(let i=1;i<=8;i++){
 
-    const name = data.r_names[i];
-    const state = data.r[i] === 1;
-    const mode = data.r_modes[i];
+    const key="r"+i;
 
-    const stateTxt = state
+    const r=relay[key];
+
+    if(!r) continue;
+
+    const state=r.state==1;
+
+    const stateTxt=state
       ? '<span class="relay-on">ON</span>'
       : '<span class="relay-off">OFF</span>';
 
-    let actionTxt = "";
+    const source=r.source ?? "";
 
-    if(mode === "manual"){
-      actionTxt = `
-        <button onclick="setRelay('${"r"+(i+1)}',1)">ON</button>
-        <button onclick="setRelay('${"r"+(i+1)}',0)">OFF</button>
+    let actionTxt="";
+
+    if(source==="hmi" || source==="init"){
+
+      actionTxt=`
+        <button onclick="setRelay('${key}',1)">ON</button>
+        <button onclick="setRelay('${key}',0)">OFF</button>
       `;
-    } else {
-      actionTxt = '<span class="badge-auto">AUTO</span>';
+
+    }else{
+
+      actionTxt=`<span class="badge-auto">${source}</span>`;
     }
 
-    html += `
-      <tr>
-        <td>${name}</td>
-        <td>${stateTxt}</td>
-        <td>${mode.toUpperCase()}</td>
-        <td>${actionTxt}</td>
-      </tr>
+    html+=`
+    <tr>
+      <td>${key}</td>
+      <td>${stateTxt}</td>
+      <td>${source}</td>
+      <td>${actionTxt}</td>
+    </tr>
     `;
   }
 
-  el.innerHTML = html;
+  el.innerHTML=html;
 }
 
-async function setRelay(name, state){
-  await postJSON("/api/relay/set", {name:name, state:state});
+
+/* ================= ACTION ================= */
+
+async function setRelay(name,state){
+
+  await postJSON("/api/relay/set",{name:name,state:state});
+
   tick();
 }
 
-async function tick(){
-  try{
-    const data = await fetchJSON("/api/latest");
 
-    document.getElementById("lastUpdate").textContent = data.server_time;
-    document.getElementById("refreshMs").textContent = data.refresh_ms;
+/* ================= LOOP ================= */
+
+async function tick(){
+
+  try{
+
+    const data=await fetchJSON("/api/latest");
+
+    document.getElementById("lastUpdate").textContent=data.server_time;
+    document.getElementById("refreshMs").textContent=data.refresh_ms;
 
     renderRelayControl(
       document.getElementById("relayControlTable"),
@@ -76,9 +107,15 @@ async function tick(){
     );
 
   }catch(e){
-    document.getElementById("lastUpdate").textContent = "ERROR";
+
+    document.getElementById("lastUpdate").textContent="ERROR";
+    console.error(e);
   }
 }
 
+
+/* ================= START ================= */
+
 tick();
-setInterval(tick, REFRESH_MS);
+
+setInterval(tick,2000);

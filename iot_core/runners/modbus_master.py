@@ -1,4 +1,5 @@
 import time
+from datetime import datetime
 
 from iot_core.core.config import load_config
 from iot_core.db.connection import get_connection
@@ -57,7 +58,6 @@ def main():
     timeout = float(modbus_cfg.get("timeout_sec", 0.3))
 
     if hasattr(client, "timeout"):
-
         client.timeout = timeout
 
     print("Modbus timeout:", timeout)
@@ -79,17 +79,22 @@ def main():
 
     current_loop = CurrentLoopDevice(
         slave_id=slaves_cfg["current_slave_id"],
-        reg_cfg=modbus_cfg["registers"]["current_loop"]
+        reg_cfg=modbus_cfg["registers"]["current_loop"],
+        conversion_cfg=cfg["conversion"]
     )
 
     waveshare_relay = WaveshareRelay(
         slave_id=slaves_cfg["waveshare_relay_slave_id"]
     )
 
+    # --------------------------------------------------
+    # POLL ORDER
+    # --------------------------------------------------
+
     devices = [
-        opta,
         temperature,
         current_loop,
+        opta,
         waveshare_relay
     ]
 
@@ -108,7 +113,7 @@ def main():
     # --------------------------------------------------
 
     PERIOD = 5.0
-    FRAME_DELAY = 0.02
+    FRAME_DELAY = 0.03
 
     # --------------------------------------------------
     # MAIN LOOP
@@ -118,12 +123,14 @@ def main():
 
         cycle_start = time.monotonic()
 
+        # spoločný timestamp pre všetky zariadenia
+        ts = datetime.now().replace(microsecond=0)
+
         # -------------------------------
         # DB reconnect
         # -------------------------------
 
         try:
-
             db_conn.ping(reconnect=True)
 
         except Exception:
@@ -146,7 +153,7 @@ def main():
 
                 print(f"Polling {name}")
 
-                device.execute(client, db_conn)
+                device.execute(client, db_conn, ts)
 
                 latency = (time.monotonic() - start) * 1000
 
@@ -160,6 +167,7 @@ def main():
 
                 reconnect_client(client)
 
+            # RTU frame spacing
             time.sleep(FRAME_DELAY)
 
         # -------------------------------
@@ -171,11 +179,8 @@ def main():
         sleep_time = PERIOD - elapsed
 
         if sleep_time > 0:
-
             time.sleep(sleep_time)
-
         else:
-
             print("Cycle overrun:", round(-sleep_time, 3), "s")
 
 
@@ -186,13 +191,10 @@ def main():
 if __name__ == "__main__":
 
     try:
-
         main()
 
     except KeyboardInterrupt:
-
         print("Modbus master stopped")
 
     except Exception as e:
-
         print("Fatal error:", e)

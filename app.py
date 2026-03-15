@@ -5,9 +5,12 @@ from fastapi.templating import Jinja2Templates
 
 from pathlib import Path
 from datetime import datetime, timedelta
+from pydantic import BaseModel
+from typing import Optional
 
 import yaml
 import pymysql
+
 
 # --------------------------------------------------
 # INIT
@@ -28,6 +31,7 @@ templates = Jinja2Templates(
     directory=str(BASE_DIR / "templates")
 )
 
+
 # --------------------------------------------------
 # LOAD CONFIG
 # --------------------------------------------------
@@ -39,8 +43,9 @@ _cfg = load_cfg()
 _db_cfg = _cfg["database"]
 _refresh_ms = _cfg.get("hmi", {}).get("refresh_ms", 2000)
 
+
 # --------------------------------------------------
-# DB
+# DB CONNECT
 # --------------------------------------------------
 
 def db_connect():
@@ -54,48 +59,20 @@ def db_connect():
         cursorclass=pymysql.cursors.DictCursor,
     )
 
-def latest_row(table):
 
-    conn = None
+# --------------------------------------------------
+# CONTROL MODEL
+# --------------------------------------------------
 
-    try:
+class ControlParams(BaseModel):
 
-        conn = db_connect()
+    pwm_period: Optional[float] = None
+    pwm_duty: Optional[float] = None
 
-        with conn.cursor() as cur:
-            cur.execute(f"SELECT * FROM `{table}` ORDER BY id DESC LIMIT 1")
-            return cur.fetchone()
+    pid_t_set: Optional[float] = None
+    pid_t_full: Optional[float] = None
+    pid_t_move: Optional[float] = None
 
-    except:
-        return None
-
-    finally:
-        if conn:
-            conn.close()
-
-def latest_ts(table):
-
-    conn = None
-
-    try:
-
-        conn = db_connect()
-
-        with conn.cursor() as cur:
-
-            cur.execute(f"SELECT ts FROM `{table}` ORDER BY id DESC LIMIT 1")
-
-            row = cur.fetchone()
-
-            if row and row.get("ts"):
-                return row["ts"]
-
-    except:
-        return None
-
-    finally:
-        if conn:
-            conn.close()
 
 # --------------------------------------------------
 # CHANNEL UTIL
@@ -108,21 +85,51 @@ def build_channel_cfg(prefix):
     names = []
     units = []
 
-    for i in range(1,9):
+    for i in range(1, 9):
 
         ch = channels.get(f"{prefix}{i}", {})
 
         names.append(ch.get("name", f"{prefix}{i}"))
-        units.append(ch.get("unit",""))
+        units.append(ch.get("unit", ""))
 
     return names, units
+
 
 def pick(row, prefix):
 
     if not row:
-        return [None]*8
+        return [None] * 8
 
-    return [row.get(f"{prefix}{i}") for i in range(1,9)]
+    return [row.get(f"{prefix}{i}") for i in range(1, 9)]
+
+
+# --------------------------------------------------
+# DB TABLE -> DICT
+# --------------------------------------------------
+
+def read_table_dict(cur, table, key_col, val_cols):
+
+    try:
+
+        cur.execute(f"SELECT * FROM {table}")
+        rows = cur.fetchall()
+
+        out = {}
+
+        for r in rows:
+
+            key = r[key_col]
+
+            if len(val_cols) == 1:
+                out[key] = r[val_cols[0]]
+            else:
+                out[key] = {c: r[c] for c in val_cols}
+
+        return out
+
+    except:
+        return {}
+
 
 # --------------------------------------------------
 # ROUTES
@@ -139,6 +146,7 @@ def monitor(request: Request):
         }
     )
 
+
 @app.get("/control", response_class=HTMLResponse)
 def control_page(request: Request):
 
@@ -151,6 +159,7 @@ def control_page(request: Request):
         }
     )
 
+
 @app.get("/relay", response_class=HTMLResponse)
 def relay_page(request: Request):
 
@@ -161,6 +170,7 @@ def relay_page(request: Request):
             "refresh_ms": _refresh_ms
         }
     )
+
 
 # --------------------------------------------------
 # GRAPH PAGE
@@ -183,6 +193,7 @@ def graph_page(request: Request):
         }
     )
 
+
 # --------------------------------------------------
 # API MONITOR
 # --------------------------------------------------
@@ -191,43 +202,7 @@ def graph_page(request: Request):
 def api_latest():
 
     db_ok = True
-
-    try:
-
-        trow = latest_row("temperature") or {}
-        irow = latest_row("current_loop") or {}
-        prow = latest_row("conversion_table") or {}
-
-        t_last = latest_ts("temperature")
-        i_last = latest_ts("current_loop")
-
-    except:
-
-        db_ok = False
-        trow = {}
-        irow = {}
-        prow = {}
-        t_last = None
-        i_last = None
-
-    # --------------------------------------------------
-    # CHANNEL CONFIG
-    # --------------------------------------------------
-
-    t_names, t_units = build_channel_cfg("t")
-    i_names, i_units = build_channel_cfg("i")
-    p_names, p_units = build_channel_cfg("p")
-
-    # --------------------------------------------------
-    # RELAYS
-    # --------------------------------------------------
-
-    relay_cfg = _cfg.get("relay", {})
-    relay_control_cfg = relay_cfg.get("control", {})
-    relay_names_cfg = relay_cfg.get("names", {})
-    relay_count = relay_cfg.get("count", 8)
-
-    relay_states = {f"r{i}":0 for i in range(1,relay_count+1)}
+    conn = None
 
     try:
 
@@ -235,34 +210,56 @@ def api_latest():
 
         with conn.cursor() as cur:
 
-            cur.execute("SELECT name,state FROM relay_state")
+            cur.execute("SELECT * FROM temperature ORDER BY id DESC LIMIT 1")
+            trow = cur.fetchone() or {}
 
-            rows = cur.fetchall()
+            cur.execute("SELECT * FROM current_loop ORDER BY id DESC LIMIT 1")
+            irow = cur.fetchone() or {}
 
-            for r in rows:
-                relay_states[r["name"]] = r["state"]
+            cur.execute("SELECT * FROM conversion_table ORDER BY id DESC LIMIT 1")
+            prow = cur.fetchone() or {}
 
-        conn.close()
+            cur.execute("SELECT ts FROM temperature ORDER BY id DESC LIMIT 1")
+            r = cur.fetchone()
+            t_last = r["ts"] if r else None
+
+            cur.execute("SELECT ts FROM current_loop ORDER BY id DESC LIMIT 1")
+            r = cur.fetchone()
+            i_last = r["ts"] if r else None
+
+            relay = read_table_dict(
+                cur,
+                "relay_state",
+                "name",
+                ["state", "source"]
+            )
+
+            control = read_table_dict(
+                cur,
+                "control_state",
+                "parameter",
+                ["value", "source"]
+            )
 
     except:
 
         db_ok = False
+        trow = {}
+        irow = {}
+        prow = {}
+        relay = {}
+        control = {}
+        t_last = None
+        i_last = None
 
-    r_values=[]
-    r_names=[]
-    r_modes=[]
+    finally:
 
-    for i in range(1,relay_count+1):
+        if conn:
+            conn.close()
 
-        name=f"r{i}"
-
-        r_values.append(relay_states.get(name,0))
-        r_names.append(relay_names_cfg.get(name,name))
-        r_modes.append(relay_control_cfg.get(name,{}).get("mode","manual"))
-
-    # --------------------------------------------------
-    # RETURN
-    # --------------------------------------------------
+    t_names, t_units = build_channel_cfg("t")
+    i_names, i_units = build_channel_cfg("i")
+    p_names, p_units = build_channel_cfg("p")
 
     return {
 
@@ -270,9 +267,9 @@ def api_latest():
         "refresh_ms": _refresh_ms,
         "db_status": "OK" if db_ok else "ERR",
 
-        "t": pick(trow,"t"),
-        "i": pick(irow,"i"),
-        "p": pick(prow,"p"),
+        "t": pick(trow, "t"),
+        "i": pick(irow, "i"),
+        "p": pick(prow, "p"),
 
         "t_names": t_names,
         "t_units": t_units,
@@ -283,149 +280,216 @@ def api_latest():
         "p_names": p_names,
         "p_units": p_units,
 
+        "relay_state": relay,
+        "control_state": control,
+
         "t_last_db": t_last.strftime("%Y-%m-%d %H:%M:%S") if t_last else None,
         "i_last_db": i_last.strftime("%Y-%m-%d %H:%M:%S") if i_last else None,
-
-        "r": r_values,
-        "r_names": r_names,
-        "r_modes": r_modes,
     }
 
+
 # --------------------------------------------------
-# RELAY CONTROL
+# GRAPH SQL
+# --------------------------------------------------
+
+SQL_JOIN = """
+SELECT
+    t.ts,
+    t.t1,t.t2,t.t3,t.t4,t.t5,t.t6,t.t7,t.t8,
+    p.p1,p.p2,p.p3,p.p4,p.p5,p.p6,p.p7,p.p8
+FROM temperature t
+LEFT JOIN conversion_table p
+ON p.ts = t.ts
+WHERE t.ts >= %s
+ORDER BY t.ts
+"""
+
+
+# --------------------------------------------------
+# GRAPH HISTORY
+# --------------------------------------------------
+
+@app.get("/api/history")
+def api_history(hours: int = 24):
+
+    start = datetime.now() - timedelta(hours=hours)
+
+    conn = None
+
+    try:
+
+        conn = db_connect()
+
+        with conn.cursor() as cur:
+
+            cur.execute(SQL_JOIN, (start,))
+            rows = cur.fetchall()
+
+        MAX_POINTS = 500
+
+        if len(rows) > MAX_POINTS:
+            step = len(rows) // MAX_POINTS
+            rows = rows[::step]
+
+        data = {
+            "time": [],
+            "t": {f"t{i}": [] for i in range(1, 9)},
+            "p": {f"p{i}": [] for i in range(1, 9)}
+        }
+
+        for r in rows:
+
+            ts = r.get("ts")
+
+            data["time"].append(ts.strftime("%H:%M:%S") if ts else None)
+
+            for i in range(1, 9):
+
+                tv = r.get(f"t{i}")
+                pv = r.get(f"p{i}")
+
+                data["t"][f"t{i}"].append(None if tv is None else float(tv))
+                data["p"][f"p{i}"].append(None if pv is None else float(pv))
+
+        return data
+
+    finally:
+
+        if conn:
+            conn.close()
+
+
+# --------------------------------------------------
+# LIVE GRAPH
+# --------------------------------------------------
+
+@app.get("/api/live")
+def api_live(minutes: int = 10):
+
+    start = datetime.now() - timedelta(minutes=minutes)
+
+    conn = None
+
+    try:
+
+        conn = db_connect()
+
+        with conn.cursor() as cur:
+
+            cur.execute(SQL_JOIN, (start,))
+            rows = cur.fetchall()
+
+        result = {
+            "time": [],
+            "t": {f"t{i}": [] for i in range(1, 9)},
+            "p": {f"p{i}": [] for i in range(1, 9)}
+        }
+
+        for r in rows:
+
+            ts = r.get("ts")
+
+            result["time"].append(ts.strftime("%H:%M:%S") if ts else None)
+
+            for i in range(1, 9):
+
+                tv = r.get(f"t{i}")
+                pv = r.get(f"p{i}")
+
+                result["t"][f"t{i}"].append(None if tv is None else float(tv))
+                result["p"][f"p{i}"].append(None if pv is None else float(pv))
+
+        return result
+
+    finally:
+
+        if conn:
+            conn.close()
+
+
+# --------------------------------------------------
+# CONTROL SAVE API
+# --------------------------------------------------
+
+@app.post("/api/control/save_all")
+async def api_control_save_all(data: ControlParams):
+
+    conn = None
+
+    try:
+
+        conn = db_connect()
+
+        with conn.cursor() as cur:
+
+            ts = datetime.now()
+
+            for param, value in data.dict().items():
+
+                if value is None:
+                    continue
+
+                cur.execute(
+                    """
+                    INSERT INTO control(parameter,value,ts)
+                    VALUES (%s,%s,%s)
+                    """,
+                    (param, value, ts)
+                )
+
+                cur.execute(
+                    """
+                    REPLACE INTO control_state(parameter,value,source)
+                    VALUES (%s,%s,'hmi')
+                    """,
+                    (param, value)
+                )
+
+        return {"status": "ok"}
+
+    except Exception as e:
+
+        print("CONTROL SAVE ERROR:", e)
+
+        return {"status": "error", "detail": str(e)}
+
+    finally:
+
+        if conn:
+            conn.close()
+# --------------------------------------------------
+# RELAY SET API
 # --------------------------------------------------
 
 @app.post("/api/relay/set")
 async def api_relay_set(data: dict):
 
-    name=data.get("name")
-    state=int(data.get("state",0))
+    name = data.get("name")
+    state = int(data.get("state", 0))
 
-    relay_cfg=_cfg.get("relay",{})
-    relay_control_cfg=relay_cfg.get("control",{})
-
-    if relay_control_cfg.get(name,{}).get("mode")=="auto":
-        return {"status":"DENIED","reason":"AUTO relay"}
+    conn = None
 
     try:
 
-        conn=db_connect()
+        conn = db_connect()
 
         with conn.cursor() as cur:
 
             cur.execute("""
-            INSERT INTO relay_state (name,state,source)
-            VALUES (%s,%s,'hmi')
-            ON DUPLICATE KEY UPDATE
-            state=VALUES(state),
-            source='hmi'
-            """,(name,state))
+                REPLACE INTO relay_state(name,state,source)
+                VALUES (%s,%s,'hmi')
+            """, (name, state))
 
-        conn.close()
+        return {"status": "ok"}
 
     except Exception as e:
 
-        return {"status":"ERROR","detail":str(e)}
+        print("RELAY SET ERROR:", e)
 
-    return {"status":"OK"}
-
-# --------------------------------------------------
-# CONTROL API
-# --------------------------------------------------
-
-@app.get("/api/control/latest")
-def api_control_latest():
-
-    result={
-        "pwm_period":None,
-        "pwm_duty":None,
-        "pid_t_set":None,
-        "pid_t_full":None,
-        "pid_t_move":None,
-    }
-
-    try:
-
-        conn=db_connect()
-
-        with conn.cursor() as cur:
-
-            for param in result.keys():
-
-                cur.execute(
-                    "SELECT value FROM control WHERE parameter=%s ORDER BY id DESC LIMIT 1",
-                    (param,)
-                )
-
-                row=cur.fetchone()
-
-                if row:
-                    result[param]=float(row["value"])
-
-        conn.close()
-
-    except:
-        pass
-
-    return result
-
-# --------------------------------------------------
-# GRAPH HISTORY API
-# --------------------------------------------------
-
-@app.get("/api/history")
-def api_history(table: str, channel: str, hours: int = 24):
-
-    allowed_tables=[
-        "temperature",
-        "current_loop",
-        "conversion_table"
-    ]
-
-    if table not in allowed_tables:
-        return {"error":"invalid table"}
-
-    if channel not in [
-        "t1","t2","t3","t4","t5","t6","t7","t8",
-        "i1","i2","i3","i4","i5","i6","i7","i8",
-        "p1","p2","p3","p4","p5","p6","p7","p8"
-    ]:
-        return {"error":"invalid channel"}
-
-    start = datetime.now() - timedelta(hours=hours)
-
-    conn=None
-
-    try:
-
-        conn=db_connect()
-
-        with conn.cursor() as cur:
-
-            query=f"""
-            SELECT ts, `{channel}`
-            FROM `{table}`
-            WHERE ts >= %s
-            ORDER BY ts
-            """
-
-            cur.execute(query,(start,))
-
-            rows=cur.fetchall()
-
-        data=[]
-
-        for r in rows:
-
-            if r[channel] is None:
-                continue
-
-            data.append({
-                "t": r["ts"].strftime("%H:%M:%S"),
-                "v": float(r[channel])
-            })
-
-        return data
+        return {
+            "status": "error",
+            "detail": str(e)
+        }
 
     finally:
 
