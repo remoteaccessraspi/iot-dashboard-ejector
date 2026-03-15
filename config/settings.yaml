@@ -5,7 +5,7 @@ modbus:
   baudrate: 9600
   parity: N
   stopbits: 1
-  timeout_sec: 0.3
+  timeout_sec: 0.55
 
   slaves:
     temperature_slave_id: 2
@@ -138,8 +138,11 @@ relay:
       mode: auto
       logic: OR
       rules:
-        - conditions:
-            - { source: i3, min: 5, max: 15, hyst: 0.5 }
+        - time:
+            from: "00:00"
+            to: "24:00"
+          conditions:
+            - { source: t3, min: 5, max: 25, hyst: 0.5 }
 
     r5:
       mode: manual

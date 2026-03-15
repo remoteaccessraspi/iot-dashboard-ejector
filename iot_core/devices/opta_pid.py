@@ -175,8 +175,8 @@ class OptaPID(BaseDevice):
 
                 for row in rows:
 
-                    param = row["parameter"]
-                    value = row["value"]
+                    param = row[0]
+                    value = row[1]
 
                     if param not in params:
                         params[param] = value

@@ -20,7 +20,8 @@ async function postJSON(url,data){
 
 function renderRelayControl(el,data){
 
-  const relay=data.relay_state;
+  const relay = data.relay_state;
+  const names = data.relay_names || {};
 
   if(!relay){
     el.innerHTML="<tr><td colspan=4>No relay data</td></tr>";
@@ -36,21 +37,25 @@ function renderRelayControl(el,data){
   </tr>
   `;
 
-  for(let i=1;i<=8;i++){
+  const keys = Object.keys(relay).filter(k => k.startsWith("r"));
 
-    const key="r"+i;
+  keys.sort();
 
-    const r=relay[key];
+  for(const key of keys){
+
+    const r = relay[key];
 
     if(!r) continue;
 
-    const state=r.state==1;
+    const label = names[key] ?? key;
 
-    const stateTxt=state
+    const state = r.state == 1;
+
+    const stateTxt = state
       ? '<span class="relay-on">ON</span>'
       : '<span class="relay-off">OFF</span>';
 
-    const source=r.source ?? "";
+    const source = r.source ?? "";
 
     let actionTxt="";
 
@@ -68,7 +73,7 @@ function renderRelayControl(el,data){
 
     html+=`
     <tr>
-      <td>${key}</td>
+      <td>${label}</td>
       <td>${stateTxt}</td>
       <td>${source}</td>
       <td>${actionTxt}</td>
@@ -96,10 +101,10 @@ async function tick(){
 
   try{
 
-    const data=await fetchJSON("/api/latest");
+    const data = await fetchJSON("/api/latest");
 
-    document.getElementById("lastUpdate").textContent=data.server_time;
-    document.getElementById("refreshMs").textContent=data.refresh_ms;
+    document.getElementById("lastUpdate").textContent = data.server_time;
+    document.getElementById("refreshMs").textContent = data.refresh_ms;
 
     renderRelayControl(
       document.getElementById("relayControlTable"),

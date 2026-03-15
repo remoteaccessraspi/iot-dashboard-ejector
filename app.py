@@ -40,8 +40,13 @@ def load_cfg():
     return yaml.safe_load(SETTINGS_PATH.read_text(encoding="utf-8"))
 
 _cfg = load_cfg()
+
 _db_cfg = _cfg["database"]
+
 _refresh_ms = _cfg.get("hmi", {}).get("refresh_ms", 2000)
+
+# relay names z YAML
+_relay_names = _cfg.get("relay", {}).get("names", {})
 
 
 # --------------------------------------------------
@@ -281,6 +286,8 @@ def api_latest():
         "p_units": p_units,
 
         "relay_state": relay,
+        "relay_names": _relay_names,
+
         "control_state": control,
 
         "t_last_db": t_last.strftime("%Y-%m-%d %H:%M:%S") if t_last else None,

@@ -12,6 +12,38 @@ from iot_core.devices.waveshare_relay import WaveshareRelay
 
 
 # --------------------------------------------------
+# RELAY MODE SYNC (YAML -> DB)
+# --------------------------------------------------
+
+def sync_relay_modes(conn, relay_cfg):
+
+    print("Sync relay modes with YAML")
+
+    control = relay_cfg.get("control", {})
+
+    cur = conn.cursor()
+
+    for name, cfg in control.items():
+
+        mode = cfg.get("mode", "manual")
+
+        if mode == "auto":
+
+            print("Relay", name, "-> AUTO")
+
+            cur.execute(
+                """
+                UPDATE relay_state
+                SET source='auto'
+                WHERE name=%s
+                """,
+                (name,)
+            )
+
+    conn.commit()
+
+
+# --------------------------------------------------
 # CONNECTION HELPERS
 # --------------------------------------------------
 
@@ -52,6 +84,13 @@ def main():
     modbus_cfg = cfg["modbus"]
 
     db_conn = get_connection()
+
+    # --------------------------------------------------
+    # SYNC RELAY MODES
+    # --------------------------------------------------
+
+    if "relay" in cfg:
+        sync_relay_modes(db_conn, cfg["relay"])
 
     client = create_client()
 

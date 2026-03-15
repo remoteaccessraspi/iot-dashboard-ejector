@@ -293,13 +293,18 @@ async function tick(){
       const states=[];
       const modes=[];
 
+      const relayNames = data.relay_names || {};
+
       for(let i=1;i<=8;i++){
 
         const key="r"+i;
 
         const r=data.relay_state[key];
 
-        names.push(key);
+        // použijeme názov zo settings.yaml
+        const label = relayNames[key] ?? key;
+
+        names.push(label);
 
         if(r){
 
