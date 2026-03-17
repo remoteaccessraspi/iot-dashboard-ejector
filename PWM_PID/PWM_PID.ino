@@ -1,210 +1,292 @@
 /*
-  OPTA – Modbus RTU Slave
-  READ HOLDING REGISTERS + FRAME COUNTER
-  + External PWM Engine
+  OPTA – Dual Controller
+  PWM expansion valve + Mixing valve controller
+  3x temperature sensors
+  PT100 -> 0-10V -> AI
 */
 
 #include <Arduino.h>
 #include <ArduinoRS485.h>
 #include <ArduinoModbus.h>
+
 #include "PWM_engine.h"
+#include "PID_engine.h"
 
 #define SLAVE_ID 1
 
+// ---------------- RS485 ----------------
+
 constexpr auto baudrate = 9600;
+
 constexpr auto bitduration = 1.0f / baudrate;
 constexpr auto wordlen = 10.0f;
 
-// RS485 delay podľa Modbus RTU špecifikácie
 constexpr auto preDelayBR  = bitduration * 9.6f * wordlen * 4.0f * 1e6;
 constexpr auto postDelayBR = bitduration * 9.6f * wordlen * 3.0f * 1e6;
 
-// =========================
-// HOLDING REGISTERS
-// =========================
-#define REG_PWM_PERIOD   0
-#define REG_PWM_DUTY     1
-#define REG_T_SET        2
-#define REG_T_FULL       3
-#define REG_T_MOVE       4
 
-// =========================
-// INPUT REGISTERS
-// =========================
-#define REG_FEEDBACK       0
-#define REG_CURRENT_DUTY   1
-#define REG_ERROR          2
-#define REG_OUTPUT_STATE   3
-#define REG_STATUS_FLAGS   4
+// ---------------- ANALOG INPUTS ----------------
 
-// =========================
-// COILS
-// =========================
-#define COIL_ENABLE_PWM   0
-#define COIL_ENABLE_PID   1
+#define AI_T_HOT   A0
+#define AI_T_COLD  A1
+#define AI_T_MIX   A2
 
-// =========================
-// Holding variables
-// =========================
+
+// ---------------- OUTPUTS ----------------
+
+#define DO_PWM         D0
+#define DO_VALVE_OPEN  D1
+#define DO_VALVE_CLOSE D2
+
+
+// ---------------- COILS ----------------
+
+#define COIL_ENABLE_PWM  0
+#define COIL_ENABLE_PID  1
+
+
+// ---------------- HOLDING REGISTERS ----------------
+
+#define REG_PWM_PERIOD 0
+#define REG_PWM_DUTY   1
+#define REG_T_SET      2
+#define REG_T_FULL     3
+#define REG_T_MOVE     4
+
+
+// ---------------- INPUT REGISTERS ----------------
+
+#define REG_T_HOT      0
+#define REG_T_COLD     1
+#define REG_T_MIX      2
+#define REG_VALVE_POS  3
+#define REG_STATUS     4
+
+
+// ---------------- GLOBAL VARIABLES ----------------
+
 uint16_t pwm_period = 5000;
 uint16_t pwm_duty   = 0;
-uint16_t t_set      = 0;
-uint16_t t_full     = 0;
-uint16_t t_move     = 0;
 
-// =========================
-// Input variables
-// =========================
-int16_t  feedback_value = 250;
-uint16_t current_duty   = 0;
-int16_t  error_value    = 0;
-uint16_t output_state   = 0;
+uint16_t t_set  = 400;
+uint16_t t_full = 120;
+uint16_t t_move = 10;
+
+int16_t t_hot  = 0;
+int16_t t_cold = 0;
+int16_t t_mix  = 0;
+
+uint16_t valve_position = 0;
 uint16_t status_flags   = 0;
 
-uint32_t frame_counter = 0;
 
-// =========================
-// Last values
-// =========================
-uint16_t last_pwm_period = 0;
-uint16_t last_pwm_duty   = 0;
-uint16_t last_t_move     = 0;
-bool     last_enable_pwm = false;
+// ---------------- CONTROLLERS ----------------
 
-// =========================
-// PWM ENGINE
-// =========================
-PWMEngine pwm(D0);
+PWMEngine pwm(DO_PWM);
+PIDEngine valve;
 
-// =========================
-// DEBUG
-// =========================
-void printHoldingFrame() {
 
-  Serial.println("\n==============================");
-  Serial.print("Frame #: "); Serial.println(frame_counter);
-  Serial.print("PWM Period (ms): "); Serial.println(pwm_period);
-  Serial.print("PWM Duty (%): "); Serial.println(pwm_duty);
-  Serial.print("T_set (x10): "); Serial.println(t_set);
-  Serial.print("T_full: "); Serial.println(t_full);
-  Serial.print("T_move: "); Serial.println(t_move);
-  Serial.println("==============================");
+// ---------------- FILTER ----------------
+
+float f_hot  = 0;
+float f_cold = 0;
+float f_mix  = 0;
+
+const float alpha = 0.1;
+
+
+// ---------------- DEBUG ----------------
+
+uint16_t prev_pwm   = 65535;
+uint16_t prev_valve = 65535;
+
+
+// ------------------------------------------------
+// Temperature read
+// ------------------------------------------------
+
+float readTemp(uint8_t pin)
+{
+  long sum = 0;
+
+  for(int i=0;i<16;i++)
+      sum += analogRead(pin);
+
+  float raw = sum / 16.0;
+
+  return raw * 200.0 / 4095.0;
 }
 
-// =========================
+
+// ------------------------------------------------
+// EMA filter
+// ------------------------------------------------
+
+float filter(float prev, float in)
+{
+  return prev + alpha * (in - prev);
+}
+
+
+// ------------------------------------------------
 // SETUP
-// =========================
-void setup() {
+// ------------------------------------------------
+
+void setup()
+{
 
   Serial.begin(115200);
-  delay(300);
+  delay(2000);
+
+  Serial.println("OPTA boot OK");
+
+  analogReadResolution(12);
 
   RS485.setDelays(preDelayBR, postDelayBR);
 
-  if (!ModbusRTUServer.begin(SLAVE_ID, baudrate, SERIAL_8N1)) {
-    while (1);
-  }
+  if (!ModbusRTUServer.begin(SLAVE_ID, baudrate, SERIAL_8N1))
+      while (1);
 
-  ModbusRTUServer.configureHoldingRegisters(0x00, 8);
-  ModbusRTUServer.configureInputRegisters(0x00, 8);
-  ModbusRTUServer.configureCoils(0x00, 4);
+  ModbusRTUServer.configureHoldingRegisters(0x00,10);
+  ModbusRTUServer.configureInputRegisters(0x00,10);
+  ModbusRTUServer.configureCoils(0x00,4);
 
   pwm.begin();
 
-  Serial.println("OPTA Modbus Slave READY");
+  valve.begin(DO_VALVE_OPEN, DO_VALVE_CLOSE);
+  valve.setTiming(t_full);
+
+  Serial.println("Controller ready");
+
 }
 
-// =========================
-// LOOP
-// =========================
-void loop() {
 
-  // PWM vždy prvé → stabilný rytmus
+// ------------------------------------------------
+// LOOP
+// ------------------------------------------------
+
+void loop()
+{
+
   pwm.update();
 
-  int requests = ModbusRTUServer.poll();
+  // ---------------- READ TEMPERATURES ----------------
 
-  if (requests > 0) {
+  float Th = readTemp(AI_T_HOT);
+  float Tc = readTemp(AI_T_COLD);
+  float Tm = readTemp(AI_T_MIX);
 
-    bool pwm_update = false;
-    bool changed = false;
+  f_hot  = filter(f_hot, Th);
+  f_cold = filter(f_cold, Tc);
+  f_mix  = filter(f_mix, Tm);
 
-    uint16_t new_period = ModbusRTUServer.holdingRegisterRead(REG_PWM_PERIOD);
-    if (new_period < 1000) new_period = 1000;
+  t_hot  = f_hot  * 10;
+  t_cold = f_cold * 10;
+  t_mix  = f_mix  * 10;
 
-    uint16_t new_duty = ModbusRTUServer.holdingRegisterRead(REG_PWM_DUTY);
-    if (new_duty > 100) new_duty = 100;
 
-    uint16_t new_t_move = ModbusRTUServer.holdingRegisterRead(REG_T_MOVE);
+  // ---------------- MODBUS ----------------
 
-    t_set  = ModbusRTUServer.holdingRegisterRead(REG_T_SET);
-    t_full = ModbusRTUServer.holdingRegisterRead(REG_T_FULL);
+  ModbusRTUServer.poll();
 
-    bool enable_pwm = ModbusRTUServer.coilRead(COIL_ENABLE_PWM);
+  pwm_period = ModbusRTUServer.holdingRegisterRead(REG_PWM_PERIOD);
+  pwm_duty   = ModbusRTUServer.holdingRegisterRead(REG_PWM_DUTY);
 
-    // PERIOD
-    if (new_period != last_pwm_period) {
+  t_set  = ModbusRTUServer.holdingRegisterRead(REG_T_SET);
+  t_full = ModbusRTUServer.holdingRegisterRead(REG_T_FULL);
+  t_move = ModbusRTUServer.holdingRegisterRead(REG_T_MOVE);
 
-      pwm_period = new_period;
-      pwm.setPeriod(pwm_period);
 
-      last_pwm_period = new_period;
+  pwm.setPeriod(pwm_period);
+  valve.setTiming(t_full);
 
-      pwm_update = true;
-      changed = true;
-    }
 
-    // DUTY
-    if (new_duty != last_pwm_duty) {
+  bool enable_pwm = ModbusRTUServer.coilRead(COIL_ENABLE_PWM);
+  bool enable_pid = ModbusRTUServer.coilRead(COIL_ENABLE_PID);
 
-      pwm_duty = new_duty;
-      last_pwm_duty = new_duty;
 
-      pwm_update = true;
-      changed = true;
-    }
+  // ---------------- PWM VALVE ----------------
 
-    // T_MOVE
-    if (new_t_move != last_t_move) {
+  if(enable_pwm)
+      pwm.setDuty(pwm_duty);
+  else
+      pwm.setDuty(0);
 
-      t_move = new_t_move;
-      pwm.setMinMove(t_move);
 
-      last_t_move = new_t_move;
+  // ---------------- MIXING VALVE ----------------
 
-      pwm_update = true;
-      changed = true;
-    }
+  if(enable_pid)
+  {
 
-    // ENABLE
-    if (enable_pwm != last_enable_pwm) {
+      float Tset  = t_set  / 10.0;
+      float Thot  = t_hot  / 10.0;
+      float Tcold = t_cold / 10.0;
+      float Tmix  = t_mix  / 10.0;
 
-      last_enable_pwm = enable_pwm;
+      float target = valve.computeFeedForward(Tset, Thot, Tcold);
 
-      pwm_update = true;
-      changed = true;
-    }
+      valve.update(target);
 
-    // APPLY PWM
-    if (pwm_update) {
-
-      uint16_t duty = enable_pwm ? pwm_duty : 0;
-      pwm.setDuty(duty);
-    }
-
-    if (changed) {
-
-      frame_counter++;
-      printHoldingFrame();
-    }
+      valve_position = valve.getPosition();
   }
 
-  current_duty = pwm.getCurrentDuty();
-  output_state = pwm.getOutputState();
 
-  ModbusRTUServer.inputRegisterWrite(REG_FEEDBACK, feedback_value);
-  ModbusRTUServer.inputRegisterWrite(REG_CURRENT_DUTY, current_duty);
-  ModbusRTUServer.inputRegisterWrite(REG_ERROR, error_value);
-  ModbusRTUServer.inputRegisterWrite(REG_OUTPUT_STATE, output_state);
-  ModbusRTUServer.inputRegisterWrite(REG_STATUS_FLAGS, status_flags);
+  // ---------------- DEBUG ----------------
+
+  if(prev_pwm != pwm_duty)
+  {
+      Serial.print("PWM duty changed: ");
+      Serial.println(pwm_duty);
+      prev_pwm = pwm_duty;
+  }
+
+  if(prev_valve != valve_position)
+  {
+      Serial.print("Valve position: ");
+      Serial.println(valve_position);
+      prev_valve = valve_position;
+  }
+
+
+  static uint32_t last = 0;
+
+  if(millis() - last > 5000)
+  {
+
+      last = millis();
+
+      Serial.print("Th=");
+      Serial.print(t_hot/10.0);
+
+      Serial.print(" Tc=");
+      Serial.print(t_cold/10.0);
+
+      Serial.print(" Tm=");
+      Serial.print(t_mix/10.0);
+
+      Serial.print(" PWM=");
+      Serial.print(pwm_duty);
+
+      Serial.print(" Valve=");
+      Serial.println(valve_position);
+  }
+
+
+  // ---------------- STATUS ----------------
+
+  status_flags = 0;
+
+  if(enable_pwm) status_flags |= 1;
+  if(enable_pid) status_flags |= 2;
+
+
+  // ---------------- SEND STATE ----------------
+
+  ModbusRTUServer.inputRegisterWrite(REG_T_HOT, t_hot);
+  ModbusRTUServer.inputRegisterWrite(REG_T_COLD, t_cold);
+  ModbusRTUServer.inputRegisterWrite(REG_T_MIX, t_mix);
+
+  ModbusRTUServer.inputRegisterWrite(REG_VALVE_POS, valve_position);
+  ModbusRTUServer.inputRegisterWrite(REG_STATUS, status_flags);
+
 }

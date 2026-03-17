@@ -242,31 +242,88 @@ async function loadGraph() {
                 intersect: false
             },
 
-            scales: {
+            plugins: {
 
-                x: {
-                    ticks: {
-                        font: { size: 20 },
-                        maxTicksLimit: 10
+                legend: {
+                    labels: {
+                        font: {
+                            size: 20
+                        }
                     }
                 },
 
+                tooltip: {
+                    titleFont: {
+                        size: 20
+                    },
+                    bodyFont: {
+                        size: 20
+                    }
+                }
+
+            },
+
+            scales: {
+
+                x: {
+                    type: "category",
+                    ticks: {
+                        font: { size: 20 },
+                        maxTicksLimit: 8,
+                        autoSkip: true,
+                        maxRotation: 90,
+                        minRotation: 90
+                    },
+                    grid: {
+                        color: "rgba(200,200,200,0.2)"   // jemné mriežky
+                    },
+                    border: {
+                        color: "#000",
+                        width: 2
+                    }
+                },
                 yPress: {
                     type: "linear",
                     position: "left",
                     min: pressScale.min,
                     max: pressScale.max,
-                    title: { display: true, text: "Pressure" }
+                    title: {
+                        display: true,
+                        text: "Pressure",
+                        font: { size: 20 }
+                    },
+                    ticks: {
+                        font: { size: 20 }
+                    },
+                    grid: {
+                        color: "rgba(200,200,200,0.2)"
+                    },
+                    border: {
+                        color: "#000",
+                        width: 2
+                    }
                 },
-
                 yTemp: {
                     type: "linear",
                     position: "right",
                     min: tempScale.min,
                     max: tempScale.max,
-                    title: { display: true, text: "Temperature" },
-                    grid: { drawOnChartArea: false }
-                }
+                    title: {
+                        display: true,
+                        text: "Temperature",
+                        font: { size: 20 }
+                    },
+                    ticks: {
+                        font: { size: 20 }
+                    },
+                    grid: { 
+                        drawOnChartArea: false 
+                    },
+                    border: {
+                        color: "#000",
+                        width: 2
+                    }
+                },
 
             }
 
