@@ -1,33 +1,46 @@
-console.log("graph.js loaded")
+console.log("graph.js v2 loaded")
 
 let chart = null
 let liveTimer = null
 let LIVE_WINDOW = 120
 let liveMode = false
 
+const MAX_POINTS = 300   // HARD LIMIT – kritické pre výkon
+
 //--------------------------------------------------
-// MEDIAN FILTER
+// LIGHT FILTER (O(n))
 //--------------------------------------------------
 
-function medianFilter(data, window = 5) {
+function avgFilter(data, window = 5) {
 
-    const half = Math.floor(window / 2)
     let result = []
+    let sum = 0
 
     for (let i = 0; i < data.length; i++) {
 
-        let arr = []
+        sum += data[i] || 0
 
-        for (let j = i - half; j <= i + half; j++) {
-            if (j >= 0 && j < data.length)
-                arr.push(data[j])
-        }
+        if (i >= window)
+            sum -= data[i - window] || 0
 
-        arr.sort((a, b) => a - b)
-        result.push(arr[Math.floor(arr.length / 2)])
+        result.push(sum / Math.min(i + 1, window))
     }
 
     return result
+}
+
+//--------------------------------------------------
+// LIMIT DATA
+//--------------------------------------------------
+
+function limitData(arr) {
+
+    if (!arr) return []
+
+    if (arr.length > MAX_POINTS)
+        return arr.slice(-MAX_POINTS)
+
+    return arr
 }
 
 //--------------------------------------------------
@@ -50,7 +63,6 @@ function autoScale(minVal, maxVal) {
         let center = (maxVal + minVal) / 2
         minScaled = center - minRange / 2
         maxScaled = center + minRange / 2
-
     }
 
     return { min: minScaled, max: maxScaled }
@@ -72,14 +84,13 @@ function getSelected(prefix) {
 
         if (v.startsWith(prefix))
             result.push(v)
-
     })
 
     return result
 }
 
 //--------------------------------------------------
-// RANGE PARSER
+// RANGE
 //--------------------------------------------------
 
 function getRange() {
@@ -96,7 +107,7 @@ function getRange() {
 }
 
 //--------------------------------------------------
-// LIVE BUTTON STYLE
+// LIVE BUTTON
 //--------------------------------------------------
 
 function setLiveButton(state){
@@ -105,13 +116,10 @@ function setLiveButton(state){
     if(!btn) return
 
     if(state){
-
-        btn.classList.remove("btn-live")
         btn.classList.add("btn-live-active")
+        btn.classList.remove("btn-live")
         btn.textContent = "LIVE ON"
-
     }else{
-
         btn.classList.remove("btn-live-active")
         btn.classList.add("btn-live")
         btn.textContent = "LIVE"
@@ -128,26 +136,17 @@ async function loadGraph() {
 
     const range = getRange()
 
-    let url = ""
-
-    if (range.minutes)
-        url = `/api/live?minutes=${range.minutes}`
-    else
-        url = `/api/history?hours=${range.hours}`
+    let url = range.minutes
+        ? `/api/live?minutes=${range.minutes}`
+        : `/api/history?hours=${range.hours}`
 
     const r = await fetch(url, { cache: "no-store" })
-
-    if (!r.ok) {
-        console.error("API error")
-        return
-    }
+    if (!r.ok) return console.error("API error")
 
     const data = await r.json()
+    if (!data.time) return console.error("Invalid API")
 
-    if (!data.time) {
-        console.error("Invalid API response", data)
-        return
-    }
+    let labels = limitData(data.time)
 
     let tChannels = getSelected("t")
     let pChannels = getSelected("p")
@@ -168,7 +167,8 @@ async function loadGraph() {
 
         if (!data.t || !data.t[ch]) continue
 
-        let values = medianFilter(data.t[ch], 5)
+        let raw = limitData(data.t[ch])
+        let values = avgFilter(raw, 5)
 
         values.forEach(v => {
             if (v != null) {
@@ -194,7 +194,8 @@ async function loadGraph() {
 
         if (!data.p || !data.p[ch]) continue
 
-        let values = medianFilter(data.p[ch], 5)
+        let raw = limitData(data.p[ch])
+        let values = avgFilter(raw, 5)
 
         values.forEach(v => {
             if (v != null) {
@@ -223,12 +224,16 @@ async function loadGraph() {
     const tempScale = autoScale(tempMin, tempMax)
     const pressScale = autoScale(pressMin, pressMax)
 
+//--------------------------------------------------
+// CHART
+//--------------------------------------------------
+
     chart = new Chart(document.getElementById("chart"), {
 
         type: "line",
 
         data: {
-            labels: data.time,
+            labels: labels,
             datasets: datasets
         },
 
@@ -244,93 +249,47 @@ async function loadGraph() {
 
             plugins: {
 
+                decimation: {
+                    enabled: true,
+                    algorithm: 'lttb',
+                    samples: 100
+                },
+
                 legend: {
-                    labels: {
-                        font: {
-                            size: 20
-                        }
-                    }
+                    labels: { font: { size: 16 } }
                 },
 
                 tooltip: {
-                    titleFont: {
-                        size: 20
-                    },
-                    bodyFont: {
-                        size: 20
-                    }
+                    titleFont: { size: 16 },
+                    bodyFont: { size: 16 }
                 }
-
             },
 
             scales: {
 
                 x: {
-                    type: "category",
                     ticks: {
-                        font: { size: 20 },
                         maxTicksLimit: 8,
-                        autoSkip: true,
                         maxRotation: 90,
                         minRotation: 90
-                    },
-                    grid: {
-                        color: "rgba(200,200,200,0.2)"   // jemné mriežky
-                    },
-                    border: {
-                        color: "#000",
-                        width: 2
                     }
                 },
+
                 yPress: {
-                    type: "linear",
                     position: "left",
                     min: pressScale.min,
-                    max: pressScale.max,
-                    title: {
-                        display: true,
-                        text: "Pressure",
-                        font: { size: 20 }
-                    },
-                    ticks: {
-                        font: { size: 20 }
-                    },
-                    grid: {
-                        color: "rgba(200,200,200,0.2)"
-                    },
-                    border: {
-                        color: "#000",
-                        width: 2
-                    }
+                    max: pressScale.max
                 },
+
                 yTemp: {
-                    type: "linear",
                     position: "right",
                     min: tempScale.min,
                     max: tempScale.max,
-                    title: {
-                        display: true,
-                        text: "Temperature",
-                        font: { size: 20 }
-                    },
-                    ticks: {
-                        font: { size: 20 }
-                    },
-                    grid: { 
-                        drawOnChartArea: false 
-                    },
-                    border: {
-                        color: "#000",
-                        width: 2
-                    }
-                },
-
+                    grid: { drawOnChartArea: false }
+                }
             }
-
         }
-
     })
-
 }
 
 //--------------------------------------------------
@@ -339,18 +298,17 @@ async function loadGraph() {
 
 async function updateLive() {
 
-    const r = await fetch("/api/live?minutes=10", { cache: "no-store" })
+    if (!chart) return
 
+    const r = await fetch("/api/live?minutes=10", { cache: "no-store" })
     if (!r.ok) return
 
     const data = await r.json()
-
-    if (!chart || !data.time) return
+    if (!data.time) return
 
     const lastIndex = data.time.length - 1
-    const newTime = data.time[lastIndex]
 
-    chart.data.labels.push(newTime)
+    chart.data.labels.push(data.time[lastIndex])
 
     if (chart.data.labels.length > LIVE_WINDOW)
         chart.data.labels.shift()
@@ -358,15 +316,15 @@ async function updateLive() {
     chart.data.datasets.forEach(ds => {
 
         let name = ds.label.toLowerCase()
-        let newValue = null
+        let val = null
 
         if (name.startsWith("t") && data.t[name])
-            newValue = data.t[name][lastIndex]
+            val = data.t[name][lastIndex]
 
         if (name.startsWith("p") && data.p[name])
-            newValue = data.p[name][lastIndex]
+            val = data.p[name][lastIndex]
 
-        ds.data.push(newValue)
+        ds.data.push(val)
 
         if (ds.data.length > LIVE_WINDOW)
             ds.data.shift()
@@ -381,24 +339,15 @@ async function updateLive() {
 
 function startLive() {
 
-    if (liveTimer)
-        return
+    if (liveTimer) return
 
     liveMode = true
     setLiveButton(true)
 
-    const range = getRange()
-
-    if (range.minutes)
-        LIVE_WINDOW = Math.round(range.minutes * 60 / 5)
-
-    if (range.hours)
-        LIVE_WINDOW = Math.round(range.hours * 3600 / 5)
+    LIVE_WINDOW = 120   // fixný bezpečný window
 
     updateLive()
-
     liveTimer = setInterval(updateLive, 5000)
-
 }
 
 function stopLive() {
@@ -408,19 +357,11 @@ function stopLive() {
 
     liveMode = false
     setLiveButton(false)
-
 }
-
-//--------------------------------------------------
-// TOGGLE LIVE
-//--------------------------------------------------
 
 function toggleLive(){
 
-    if(liveMode)
-        stopLive()
-    else
-        startLive()
+    liveMode ? stopLive() : startLive()
 }
 
 //--------------------------------------------------
@@ -429,8 +370,7 @@ function toggleLive(){
 
 document.addEventListener("DOMContentLoaded", () => {
 
-    console.log("Graph page ready")
+    console.log("Graph v2 ready")
 
     loadGraph()
-
 })

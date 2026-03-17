@@ -212,8 +212,8 @@ class OptaPID(BaseDevice):
         # 3 READ COIL STATES
         # ======================================================
 
-        enable_pwm = True
-        enable_pid = True
+        enable_pwm = False
+        enable_pid = False
 
         try:
 
@@ -227,16 +227,29 @@ class OptaPID(BaseDevice):
 
                 rows = cur.fetchall()
 
-                for row in rows:
+                state_map = {}
 
-                    if row["name"] == "r1":
-                        enable_pwm = bool(row["state"])
+                for r in rows:
+                    try:
+                        name = r["name"]
+                        state = r["state"]
+                    except (TypeError, KeyError):
+                        name = r[0]
+                        state = r[1]
 
-                    if row["name"] == "r2":
-                        enable_pid = bool(row["state"])
+                    state_map[name] = state
+
+                enable_pwm = bool(state_map.get("r1", 0))
+                enable_pid = bool(state_map.get("r2", 0))
+
+                print(f"RELAY DB: {state_map} -> PWM={enable_pwm} PID={enable_pid}")
 
         except Exception as e:
+
             print("OPTA DB error (coil read):", e)
+
+            enable_pwm = False
+            enable_pid = False
 
         # ======================================================
         # 4 WRITE COILS
