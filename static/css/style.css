@@ -143,13 +143,14 @@ table tr > *:first-child * {
 
 .nav {
   margin-bottom: 32px;
-  font-size: 1.1rem;
+  font-size: 1.8rem;      /* 👈 väčšie písmo */
 }
 
 .nav a {
-  color: #bdbdbd;
+  color: #ffffff;         /* 👈 biele */
   margin-right: 24px;
   text-decoration: none;
+  font-weight: bold;      /* 👈 bold */
 }
 
 .nav a:hover {

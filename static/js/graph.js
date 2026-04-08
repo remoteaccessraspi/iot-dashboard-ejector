@@ -237,7 +237,7 @@ async function loadGraph() {
             datasets: datasets
         },
 
-        options: {
+       options: {
 
             responsive: true,
             animation: false,
@@ -256,12 +256,15 @@ async function loadGraph() {
                 },
 
                 legend: {
-                    labels: { font: { size: 16 } }
+                    labels: { 
+                        font: { size: 20, weight: "bold" },
+                        color: "#fff"
+                    }
                 },
 
                 tooltip: {
-                    titleFont: { size: 16 },
-                    bodyFont: { size: 16 }
+                    titleFont: { size: 18, weight: "bold" },
+                    bodyFont: { size: 18, weight: "bold" }
                 }
             },
 
@@ -269,22 +272,44 @@ async function loadGraph() {
 
                 x: {
                     ticks: {
+                        font: { size: 18, weight: "bold" },
+                        color: "#fff",
                         maxTicksLimit: 8,
                         maxRotation: 90,
                         minRotation: 90
+                    },
+                    border: {
+                        color: "#fff",
+                        width: 2
                     }
                 },
 
                 yPress: {
                     position: "left",
                     min: pressScale.min,
-                    max: pressScale.max
+                    max: pressScale.max,
+                    ticks: {
+                        font: { size: 18, weight: "bold" },
+                        color: "#fff"
+                    },
+                    border: {
+                        color: "#fff",
+                        width: 2
+                    }
                 },
 
                 yTemp: {
                     position: "right",
                     min: tempScale.min,
                     max: tempScale.max,
+                    ticks: {
+                        font: { size: 18, weight: "bold" },
+                        color: "#fff"
+                    },
+                    border: {
+                        color: "#fff",
+                        width: 2
+                    },
                     grid: { drawOnChartArea: false }
                 }
             }

@@ -1,8 +1,5 @@
 /*
-  OPTA – Dual Controller
-  PWM expansion valve + Mixing valve controller
-  3x temperature sensors
-  PT100 -> 0-10V -> AI
+  OPTA – Dual Controller (FINAL FIX)
 */
 
 #include <Arduino.h>
@@ -17,7 +14,6 @@
 // ---------------- RS485 ----------------
 
 constexpr auto baudrate = 9600;
-
 constexpr auto bitduration = 1.0f / baudrate;
 constexpr auto wordlen = 10.0f;
 
@@ -107,14 +103,15 @@ uint16_t prev_valve = 65535;
 
 float readTemp(uint8_t pin)
 {
-  long sum = 0;
+  uint32_t sum = 0;
 
-  for (int i = 0; i < 16; i++)
+  for (int i = 0; i < 5; i++)
     sum += analogRead(pin);
 
-  float raw = sum / 16.0;
+  float raw = sum / 5.0f;
 
-  return raw * 200.0 / 4095.0;
+  //return (raw / 1023.0f) * 150.0f - 50.0f;
+  return (raw);
 }
 
 
@@ -154,9 +151,15 @@ void setup()
 
   valve.begin(DO_VALVE_OPEN, DO_VALVE_CLOSE);
   valve.setTiming(t_full);
+  valve.setMoveTime(t_move);
+
+  valve.reset();
+
+  digitalWrite(DO_VALVE_OPEN, LOW);
+  digitalWrite(DO_VALVE_CLOSE, LOW);
 
   Serial.println("Controller ready");
-}
+}   // ✅ TOTO CHÝBALO
 
 
 // ------------------------------------------------
@@ -181,7 +184,6 @@ void loop()
   t_cold = (int16_t)(f_cold * 10.0f);
   t_mix  = (int16_t)(f_mix * 10.0f);
 
-
   // ---------------- MODBUS ----------------
 
   ModbusRTUServer.poll();
@@ -196,69 +198,42 @@ void loop()
   bool enable_pwm = ModbusRTUServer.coilRead(COIL_ENABLE_PWM);
   bool enable_pid = ModbusRTUServer.coilRead(COIL_ENABLE_PID);
 
+  // ---------------- PWM ----------------
 
-  // ---------------- PWM VALVE ----------------
+  pwm.setPeriod(pwm_period);
 
-pwm.setPeriod(pwm_period);
+  if (enable_pwm)
+  {
+    pwm.enable(true);
+    pwm.setDuty((uint8_t)pwm_duty);
+  }
+  else
+  {
+    pwm.setDuty(0);
+    pwm.enable(false);
+    digitalWrite(DO_PWM, LOW);
+  }
 
-if (enable_pwm)
-{
-  pwm.enable(true);
-  pwm.setDuty((uint8_t)pwm_duty);
-}
-else
-{
-  // SOFT STOP
-  pwm.setDuty(0);
-
-  // DISABLE ENGINE
-  pwm.enable(false);
-
-  // HARD OFF – fyzický pin
-  digitalWrite(DO_PWM, LOW);
-}
-
-
-  // ---------------- MIXING VALVE ----------------
+  // ---------------- VALVE ----------------
 
   valve.setTiming(t_full);
+  valve.setMoveTime(t_move);
 
-  if (enable_pid)
-  {
-    float Tset  = t_set  / 10.0f;
-    float Thot  = t_hot  / 10.0f;
-    float Tcold = t_cold / 10.0f;
-    float Tmix  = t_mix  / 10.0f;
+  float Tset = t_set / 10.0f;
+  float Tmix = t_mix / 10.0f;
 
-    float target = valve.computeFeedForward(Tset, Thot, Tcold);
+  valve.process(Tset, Tmix, enable_pid);
 
-    valve.update(target);
+  valve_position = valve.getPosition();
 
-    valve_position = valve.getPosition();
-  }
-
-
-  // ---------------- DEBUG ----------------
-
-  if (prev_pwm != pwm_duty)
-  {
-    Serial.print("PWM duty changed: ");
-    Serial.println(pwm_duty);
-    prev_pwm = pwm_duty;
-  }
-
-  if (prev_valve != valve_position)
-  {
-    Serial.print("Valve position: ");
-    Serial.println(valve_position);
-    prev_valve = valve_position;
-  }
+  // ---------------- DEBUG (FIXED) ----------------
 
   static uint32_t last = 0;
+  uint32_t now = millis();
 
-  if (millis() - last > 5000)
+  if ((int32_t)(now - last) >= 1000)
   {
-    last = millis();
+    last = now;
 
     Serial.print("Th=");
     Serial.print(t_hot / 10.0f);
@@ -269,13 +244,15 @@ else
     Serial.print(" Tm=");
     Serial.print(t_mix / 10.0f);
 
+    Serial.print(" POS=");
+    Serial.print(valve_position);
+
     Serial.print(" PWM=");
-    Serial.print(pwm_duty);
+    Serial.println(pwm_duty);
 
-    Serial.print(" Valve=");
-    Serial.println(valve_position);
+    Serial.print(" Tm raw data=");
+    Serial.println(Tm);
   }
-
 
   // ---------------- STATUS ----------------
 
@@ -283,7 +260,6 @@ else
 
   if (enable_pwm) status_flags |= 1;
   if (enable_pid) status_flags |= 2;
-
 
   // ---------------- SEND STATE ----------------
 

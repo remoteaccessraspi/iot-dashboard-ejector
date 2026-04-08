@@ -42,34 +42,34 @@ database:
 channels:
 
   # --- Teploty ---
-  t1: { name: "Temp Inlet", unit: "°C" }
-  t2: { name: "Temp Outlet", unit: "°C" }
-  t3: { name: "Temp 3", unit: "°C" }
-  t4: { name: "Temp 4", unit: "°C" }
-  t5: { name: "Temp 5", unit: "°C" }
-  t6: { name: "NA", unit: "°C" }
-  t7: { name: "NA", unit: "°C" }
-  t8: { name: "NA", unit: "°C" }
+  t1: { name: "Teplota kondenzatora vystup(out) sekundar", unit: "°C" }
+  t2: { name: "Teplota vyparnika vystup(out) sekundar", unit: "°C" }
+  t3: { name: "Teplota generatora vystup(out) sekundar", unit: "°C" }
+  t4: { name: "Teplota generatora vstup(in) sekundar", unit: "°C" }
+  t5: { name: "Teplota kondenzatora vstup(in) sekundar", unit: "°C" }
+  t6: { name: "Teplota generatora primar", unit: "°C" }
+  t7: { name: "Teplota vyparnika primar", unit: "°C" }
+  t8: { name: "Teplota vyparnika vstup(in) sekundar", unit: "°C" }
 
   # --- Tlaky ---
   p1: { name: "NA", unit: "Pa" }
   p2: { name: "NA", unit: "Pa" }
   p3: { name: "NA", unit: "Pa" }
   p4: { name: "NA", unit: "Pa" }
-  p5: { name: "Pressure 5", unit: "Pa" }
-  p6: { name: "Pressure 6", unit: "Pa" }
-  p7: { name: "Pressure 7", unit: "Pa" }
-  p8: { name: "Main Tank Pressure", unit: "kPa" }
+  p5: { name: "Kondenyacny tlak", unit: "kPa" }
+  p6: { name: "Generacny tlak", unit: "kPa" }
+  p7: { name: "Vyparny tlak", unit: "kPa" }
+  p8: { name: "NA", unit: "kPa" }
 
   # --- Currents ---
   i1: { name: "na", unit: "mA" }
   i2: { name: "NA", unit: "mA" }
   i3: { name: "NA", unit: "mA" }
   i4: { name: "NA", unit: "mA" }
-  i5: { name: "Loop 4", unit: "mA" }
-  i6: { name: "Loop 3", unit: "mA" }
-  i7: { name: "Heater Current", unit: "mA" }
-  i8: { name: "Pump Current", unit: "mA" }
+  i5: { name: "Kondenyacny tlak", unit: "mA" }
+  i6: { name: "Generacny tlak", unit: "mA" }
+  i7: { name: "Vyparny tlak", unit: "mA" }
+  i8: { name: "NA", unit: "mA" }
 
 conversion:
   interval_sec: 1
@@ -78,10 +78,10 @@ conversion:
     p2: { source: i2, a: 0.0, b: 100000.0 }
     p3: { source: i3, a: 0.0, b: 100000.0 }
     p4: { source: i4, a: 0.0, b: 100000.0 }
-    p5: { source: i5, a: 100.0, b: 300.0 }
-    p6: { source: i6, a: 100.0, b: 100.0 }
-    p7: { source: i7, a: 100.0, b: 300.0 }
-    p8: { source: i8, a: 100.0, b: 200.0 } 
+    p5: { source: i5, a: 0.0, b: 700.0 }
+    p6: { source: i6, a: 0.0, b: 1700.0 }
+    p7: { source: i7, a: 0.0, b: 700.0 }
+    p8: { source: i8, a: 100.0, b: 300.0 } 
 
 # ------------------------
 # RELÉ
@@ -92,7 +92,7 @@ relay:
   names:
     r1: "ENABLE PWM (FIXED)"
     r2: "ENABLE PID (FIXED)"
-    r3: "Valve 243"
+    r3: "Valve 223"
     r4: "Heater54"
     r5: "Spare 1"
     r6: "Spare 852"
@@ -125,7 +125,7 @@ relay:
             from: "06:00"
             to:   "22:00"
           conditions:
-            - { source: p8, min: 80, max: 160, hyst: 2 }
+            - { source: p8, min: 80, max: 200, hyst: 2 }
 
     # ---- R2 MANUAL ----
     r2:

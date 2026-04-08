@@ -1,115 +1,257 @@
-#ifndef PID_ENGINE_H
-#define PID_ENGINE_H
+#pragma once
+#include <Arduino.h>
 
-class PIDEngine {
-
+class PIDEngine
+{
 public:
 
-  void begin(uint8_t openPin,uint8_t closePin)
+  void begin(uint8_t pin_open, uint8_t pin_close)
   {
-    pinOpen=openPin;
-    pinClose=closePin;
+    _pin_open  = pin_open;
+    _pin_close = pin_close;
 
-    pinMode(pinOpen,OUTPUT);
-    pinMode(pinClose,OUTPUT);
+    pinMode(_pin_open, OUTPUT);
+    pinMode(_pin_close, OUTPUT);
 
-    digitalWrite(pinOpen,LOW);
-    digitalWrite(pinClose,LOW);
+    digitalWrite(_pin_open, LOW);
+    digitalWrite(_pin_close, LOW);
 
-    state=INIT;
-    timer=millis();
+    reset();
+
+    Serial.println("PIDEngine v5 ready");
   }
 
-  void setTiming(float full)
+  void begin() {}
+
+  void reset()
   {
-    T_full=full;
-    speed=100.0/T_full;
+    _state = IDLE;
+    _last_enable = false;
+    _position = 0.0f;
+    _moving = false;
+    _direction = 0;
   }
 
-  float computeFeedForward(float Tset,float Thot,float Tcold)
+  // ---------------- CONFIG ----------------
+
+  void setTiming(uint16_t t_full_sec)
   {
-    float denom=Thot-Tcold;
-
-    if(denom<0.1) return 50;
-
-    float r=(Tset-Tcold)/denom;
-
-    if(r>1) r=1;
-    if(r<0) r=0;
-
-    return r*100;
+    _t_full = max((uint16_t)1, t_full_sec);
   }
 
-  void update(float target)
+  void setMoveTime(uint16_t t_move_sec)
   {
-    uint32_t now=millis();
-    float dt=(now-last)/1000.0;
-    last=now;
+    _t_move = max((uint16_t)1, t_move_sec);
+  }
 
-    if(state==INIT)
+  void setDeadband(float db)
+  {
+    _deadband = db;
+  }
+
+  // ---------------- MAIN ----------------
+
+  void process(float t_set, float t_mix, bool enable_pid)
+  {
+    uint32_t now = millis();
+
+    updatePosition(now);
+
+    // enable edge
+    if (enable_pid && !_last_enable)
     {
-      digitalWrite(pinOpen,LOW);
-      digitalWrite(pinClose,HIGH);
+      Serial.println("INIT_OPEN");
 
-      if(now-timer > T_full*1000)
-      {
-        digitalWrite(pinClose,LOW);
-        position=0;
-        state=RUN;
-      }
+      _state = INIT_OPEN;
+      openValve(now);
 
+      _timer = now;
+      _interval = _t_full * 1000UL;
+    }
+
+    _last_enable = enable_pid;
+
+    if (!enable_pid)
+    {
+      stopValve(now);
+      _state = IDLE;
       return;
     }
 
-    float error=target-position;
+    if (now - _timer < _interval)
+      return;
 
-    if(error>1)
+    _timer = now;
+
+    float error = t_set - t_mix;
+
+    switch (_state)
     {
-      digitalWrite(pinOpen,HIGH);
-      digitalWrite(pinClose,LOW);
-      position+=speed*dt;
-    }
-    else if(error<-1)
-    {
-      digitalWrite(pinOpen,LOW);
-      digitalWrite(pinClose,HIGH);
-      position-=speed*dt;
-    }
-    else
-    {
-      digitalWrite(pinOpen,LOW);
-      digitalWrite(pinClose,LOW);
+      case INIT_OPEN:
+      {
+        stopValve(now);
+
+        _position = 100.0f;
+
+        _state = FAST;
+        closeValve(now);
+
+        _interval = max(1UL, (_t_move * 1000UL) / 10);
+        break;
+      }
+
+      case FAST:
+      {
+        if (fabs(error) <= _deadband)
+        {
+          stopValve(now);
+          _state = REGULATE;
+          _interval = _t_move * 1000UL;
+        }
+        else
+        {
+          moveByError(error, now);
+          _interval = max(1UL, (_t_move * 1000UL) / 10);
+        }
+        break;
+      }
+
+      case REGULATE:
+      {
+        if (fabs(error) <= _deadband)
+        {
+          stopValve(now);
+          _interval = _t_move * 1000UL;
+        }
+        else
+        {
+          _state = FAST;
+          moveByError(error, now);
+          _interval = max(1UL, (_t_move * 1000UL) / 10);
+        }
+        break;
+      }
+
+      default:
+        break;
     }
 
-    if(position>100) position=100;
-    if(position<0) position=0;
+    // DEBUG
+    if (now - _dbg_timer > 1000)
+    {
+      _dbg_timer = now;
+
+    //  Serial.print("POS=");
+    //  Serial.print(_position);
+    //  Serial.print(" ERR=");
+    //  Serial.println(error);
+    }
   }
 
-  uint16_t getPosition()
+  uint16_t getPosition() const
   {
-    return position;
+    return (uint16_t)_position;
   }
 
 private:
 
   enum State
   {
-    INIT,
-    RUN
+    IDLE,
+    INIT_OPEN,
+    FAST,
+    REGULATE
   };
 
-  State state;
+  State _state = IDLE;
 
-  uint8_t pinOpen;
-  uint8_t pinClose;
+  uint8_t _pin_open;
+  uint8_t _pin_close;
 
-  float position=0;
+  uint32_t _timer = 0;
+  uint32_t _interval = 0;
 
-  float T_full=120;
-  float speed;
+  uint16_t _t_full = 120;
+  uint16_t _t_move = 10;
 
-  uint32_t timer;
-  uint32_t last=0;
+  float _deadband = 1.0f;
+  bool _last_enable = false;
+
+  float _position = 0.0f;
+
+  uint32_t _move_start = 0;
+  int _direction = 0;
+  bool _moving = false;
+
+  uint32_t _dbg_timer = 0;
+
+  // ---------------- CORE ----------------
+
+  void updatePosition(uint32_t now)
+  {
+    if (!_moving) return;
+
+    uint32_t dt = now - _move_start;
+
+    float delta = (dt / (float)(_t_full * 1000.0f)) * 100.0f;
+
+    _position += delta * _direction;
+
+    _position = constrain(_position, 0.0f, 100.0f);
+
+    _move_start = now;
+  }
+
+  void moveByError(float error, uint32_t now)
+  {
+    if (error > 0)
+      openValve(now);
+    else
+      closeValve(now);
+  }
+
+  // ---------------- VALVE ----------------
+
+  void openValve(uint32_t now)
+  {
+    if (_moving && _direction == +1)
+      return;
+
+    stopValve(now);
+
+    digitalWrite(_pin_open, HIGH);
+    digitalWrite(_pin_close, LOW);
+
+    startMove(+1, now);
+  }
+
+  void closeValve(uint32_t now)
+  {
+    if (_moving && _direction == -1)
+      return;
+
+    stopValve(now);
+
+    digitalWrite(_pin_open, LOW);
+    digitalWrite(_pin_close, HIGH);
+
+    startMove(-1, now);
+  }
+
+  void stopValve(uint32_t now)
+  {
+    updatePosition(now);
+
+    digitalWrite(_pin_open, LOW);
+    digitalWrite(_pin_close, LOW);
+
+    _moving = false;
+  }
+
+  void startMove(int dir, uint32_t now)
+  {
+    _move_start = now;
+    _moving = true;
+    _direction = dir;
+  }
 };
-
-#endif
