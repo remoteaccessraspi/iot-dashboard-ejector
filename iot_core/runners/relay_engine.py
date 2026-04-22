@@ -2,9 +2,10 @@
 
 import time
 from datetime import datetime, time as dtime
-import yaml
-import pymysql
 from pathlib import Path
+
+import pymysql
+import yaml
 
 
 # --------------------------------------------------
@@ -45,20 +46,20 @@ def db_connect(cfg):
 # --------------------------------------------------
 
 def parse_time_safe(tstr):
-
     if tstr == "24:00":
         return dtime(23, 59, 59)
-
     return datetime.strptime(tstr, "%H:%M").time()
 
 
 def time_ok(rule_time, now):
-
     if not rule_time:
         return True
 
-    t_from = parse_time_safe(rule_time["from"])
-    t_to   = parse_time_safe(rule_time["to"])
+    try:
+        t_from = parse_time_safe(rule_time["from"])
+        t_to = parse_time_safe(rule_time["to"])
+    except Exception:
+        return False
 
     now_t = now.time()
 
@@ -75,8 +76,11 @@ def time_ok(rule_time, now):
 # --------------------------------------------------
 
 def cond_ok(cond, data):
+    src = cond.get("source")
+    if not src:
+        return False
 
-    val = data.get(cond["source"])
+    val = data.get(src)
 
     if val is None:
         return False
@@ -95,36 +99,89 @@ def cond_ok(cond, data):
 # --------------------------------------------------
 
 def read_latest(conn):
-
     out = {}
 
     with conn.cursor() as cur:
-
         cur.execute("SELECT * FROM temperature ORDER BY id DESC LIMIT 1")
         t = cur.fetchone() or {}
 
         cur.execute("SELECT * FROM conversion_table ORDER BY id DESC LIMIT 1")
         p = cur.fetchone() or {}
 
-    for i in range(1, 9):
-        out[f"t{i}"] = t.get(f"t{i}")
-        out[f"p{i}"] = p.get(f"p{i}")
+        cur.execute("SELECT * FROM current_loop ORDER BY id DESC LIMIT 1")
+        i = cur.fetchone() or {}
+
+    for n in range(1, 9):
+        out[f"t{n}"] = t.get(f"t{n}")
+        out[f"p{n}"] = p.get(f"p{n}")
+        out[f"i{n}"] = i.get(f"i{n}")
 
     return out
 
 
 # --------------------------------------------------
-# UPDATE RELAY
+# RELAY STATE HELPERS
 # --------------------------------------------------
 
-def update_relay(conn, name, state):
-
+def get_relay_row(conn, name):
     with conn.cursor() as cur:
-
         cur.execute("""
-            REPLACE INTO relay_state(name,state,source)
-            VALUES (%s,%s,'auto')
-        """, (name, int(state)))
+            SELECT name, state, source
+            FROM relay_state
+            WHERE name=%s
+            LIMIT 1
+        """, (name,))
+        return cur.fetchone()
+
+
+def set_relay_state(conn, name, state, source):
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO relay_state(name, state, source)
+            VALUES (%s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                state = VALUES(state),
+                source = VALUES(source)
+        """, (name, int(state), source))
+
+
+def set_relay_source_only_if_auto(conn, name, new_source="hmi"):
+    """
+    Pri prepnutí auto -> manual necháme stav tak, ako bol,
+    ale zdroj už nesmie zostať 'auto'.
+    """
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE relay_state
+            SET source=%s
+            WHERE name=%s AND source='auto'
+        """, (new_source, name))
+
+
+# --------------------------------------------------
+# RELAY EVALUATION
+# --------------------------------------------------
+
+def eval_relay(rcfg, data, now):
+    logic = str(rcfg.get("logic", "OR")).upper()
+    rules = rcfg.get("rules", [])
+
+    if logic not in ("OR", "AND"):
+        logic = "OR"
+
+    final = False if logic == "OR" else True
+
+    for rule in rules:
+        t_ok = time_ok(rule.get("time"), now)
+        c_ok = all(cond_ok(c, data) for c in rule.get("conditions", []))
+        active = t_ok and c_ok
+
+        if logic == "OR":
+            final = final or active
+        else:
+            final = final and active
+
+    return int(final)
 
 
 # --------------------------------------------------
@@ -132,7 +189,6 @@ def update_relay(conn, name, state):
 # --------------------------------------------------
 
 def main():
-
     cfg = load_cfg()
     conn = db_connect(cfg)
 
@@ -140,15 +196,14 @@ def main():
     relay_cfg = {}
 
     print("Relay engine started")
+    print("SETTINGS_PATH =", SETTINGS_PATH)
 
     while True:
-
         now = datetime.now()
 
         # -----------------------------
-        # CONFIG RELOAD (smart)
+        # CONFIG RELOAD
         # -----------------------------
-
         try:
             mtime = SETTINGS_PATH.stat().st_mtime
 
@@ -156,15 +211,16 @@ def main():
                 cfg = load_cfg()
                 relay_cfg = cfg.get("relay", {}).get("control", {})
                 last_mtime = mtime
-                print("Config reloaded")
 
+                print("Config reloaded")
+                for name, rcfg in relay_cfg.items():
+                    print(f"  {name}: mode={rcfg.get('mode')}")
         except Exception as e:
             print("Config reload error:", e)
 
         # -----------------------------
         # DB RECONNECT
         # -----------------------------
-
         try:
             conn.ping(reconnect=True)
         except Exception:
@@ -174,41 +230,51 @@ def main():
         # -----------------------------
         # LOAD DATA
         # -----------------------------
-
-        data = read_latest(conn)
+        try:
+            data = read_latest(conn)
+        except Exception as e:
+            print("Read latest error:", e)
+            time.sleep(1)
+            continue
 
         # -----------------------------
         # RELAY EVALUATION
         # -----------------------------
-
         for name, rcfg in relay_cfg.items():
+            mode = str(rcfg.get("mode", "manual")).lower()
 
-            if rcfg.get("mode") != "auto":
+            # manual režim:
+            # nevyhodnocovať rules,
+            # len ak ostal historicky source='auto', prepni ho späť na hmi
+            if mode != "auto":
+                try:
+                    row = get_relay_row(conn, name)
+
+                    if row and row.get("source") == "auto":
+                        set_relay_source_only_if_auto(conn, name, "hmi")
+                        print(f"{name} manual -> source auto -> hmi")
+                except Exception as e:
+                    print(f"{name} manual sync error:", e)
+
                 continue
 
-            logic = rcfg.get("logic", "OR")
-            rules = rcfg.get("rules", [])
+            # auto režim
+            try:
+                final = eval_relay(rcfg, data, now)
+                row = get_relay_row(conn, name)
 
-            final = False if logic == "OR" else True
+                old_state = int(row["state"]) if row and row.get("state") is not None else None
+                old_source = row.get("source") if row else None
 
-            for rule in rules:
-
-                t_ok = time_ok(rule.get("time"), now)
-                c_ok = all(cond_ok(c, data) for c in rule.get("conditions", []))
-
-                active = t_ok and c_ok
-
-                # DEBUG (môžeš vypnúť neskôr)
-                print(f"{name} | t_ok={t_ok} c_ok={c_ok} -> {active}")
-
-                if logic == "OR":
-                    final = final or active
+                # zapisuj len keď sa niečo zmenilo
+                if old_state != final or old_source != "auto":
+                    set_relay_state(conn, name, final, "auto")
+                    print(f"{name} => FINAL: {final} (updated)")
                 else:
-                    final = final and active
+                    print(f"{name} => FINAL: {final} (no change)")
 
-            print(f"{name} => FINAL: {final}")
-
-            update_relay(conn, name, final)
+            except Exception as e:
+                print(f"{name} eval error:", e)
 
         time.sleep(1)
 

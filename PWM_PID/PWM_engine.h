@@ -1,14 +1,14 @@
-#ifndef PWM_ENGINE_H
-#define PWM_ENGINE_H
+#pragma once
 
 #include <Arduino.h>
-#include <mbed.h>
-#include <chrono>
 
-class PWMEngine {
+class PWMEngine
+{
 public:
-
-  PWMEngine(uint8_t pin) : _pin(pin) {}
+  explicit PWMEngine(uint8_t pin)
+    : _pin(pin)
+  {
+  }
 
   void begin()
   {
@@ -16,226 +16,128 @@ public:
     digitalWrite(_pin, LOW);
 
     _enabled = false;
-    _stateOn = false;
-    _reconfigurePending = false;
+    _output_state = false;
+    _last_change = millis();
 
-    recomputeTimes();
-    _timeout.detach();
-  }
-
-  void setPeriod(uint32_t p)
-  {
-    if (p == 0) p = 1;
-
-    core_util_critical_section_enter();
-
-    if (period != p)
-    {
-      period = p;
-      recomputeTimes();
-      _reconfigurePending = true;
-    }
-
-    core_util_critical_section_exit();
-  }
-
-  void setDuty(uint8_t d)
-  {
-    if (d > 100) d = 100;
-
-    core_util_critical_section_enter();
-
-    if (duty != d)
-    {
-      duty = d;
-      recomputeTimes();
-      _reconfigurePending = true;
-    }
-
-    core_util_critical_section_exit();
+    Serial.println("[PWM] PWMEngine ready");
   }
 
   void enable(bool en)
   {
-    bool doStart = false;
-    bool doStop  = false;
-
-    core_util_critical_section_enter();
-
-    if (_enabled != en)
+    if (!en)
     {
-      _enabled = en;
-
-      if (_enabled)
-      {
-        _reconfigurePending = true;
-        doStart = true;
-      }
-      else
-      {
-        doStop = true;
-      }
+      _enabled = false;
+      _output_state = false;
+      digitalWrite(_pin, LOW);
+      return;
     }
 
-    core_util_critical_section_exit();
+    if (!_enabled)
+    {
+      _enabled = true;
+      _last_change = millis();
+      _output_state = false;
+      digitalWrite(_pin, LOW);
+    }
+  }
 
-    if (doStop)
-      stopOutput();
+  void setPeriod(uint32_t period_ms)
+  {
+    _period_ms = max((uint32_t)100, period_ms);
+  }
 
-    if (doStart)
-      restartCycle();
+  void setDuty(uint8_t duty_percent)
+  {
+    if (duty_percent > 100)
+      duty_percent = 100;
+
+    _duty_percent = duty_percent;
+  }
+
+  uint32_t getPeriod() const
+  {
+    return _period_ms;
+  }
+
+  uint8_t getDuty() const
+  {
+    return _duty_percent;
+  }
+
+  bool isEnabled() const
+  {
+    return _enabled;
+  }
+
+  bool outputState() const
+  {
+    return _output_state;
   }
 
   void update()
   {
-    bool needRestart = false;
-    bool en = false;
-
-    core_util_critical_section_enter();
-    needRestart = _reconfigurePending;
-    en = _enabled;
-    if (needRestart) _reconfigurePending = false;
-    core_util_critical_section_exit();
-
-    if (en && needRestart)
-      restartCycle();
-  }
-
-  uint32_t getTimeOn() const { return pwm_time_on; }
-  uint32_t getTimeOff() const { return pwm_time_off; }
-
-private:
-
-  uint8_t _pin;
-
-  volatile uint32_t period = 5000;
-  volatile uint8_t  duty   = 0;
-
-  volatile uint32_t pwm_time_on  = 0;
-  volatile uint32_t pwm_time_off = 5000;
-
-  volatile bool _enabled = false;
-  volatile bool _stateOn = false;
-  volatile bool _reconfigurePending = false;
-
-  mbed::Timeout _timeout;
-
-  void recomputeTimes()
-  {
-    pwm_time_on  = (period * duty) / 100;
-    pwm_time_off = period - pwm_time_on;
-  }
-
-  void stopOutput()
-  {
-    _timeout.detach();
-
-    core_util_critical_section_enter();
-    _stateOn = false;
-    core_util_critical_section_exit();
-
-    digitalWrite(_pin, LOW);
-  }
-
-  void restartCycle()
-  {
-    _timeout.detach();
-
-    core_util_critical_section_enter();
-    bool en = _enabled;
-    uint8_t d = duty;
-    uint32_t ton = pwm_time_on;
-    core_util_critical_section_exit();
-
-    if (!en)
+    if (!_enabled)
     {
-      digitalWrite(_pin, LOW);
-      core_util_critical_section_enter();
-      _stateOn = false;
-      core_util_critical_section_exit();
+      if (_output_state)
+      {
+        _output_state = false;
+        digitalWrite(_pin, LOW);
+      }
       return;
     }
 
-    if (d == 0)
+    if (_duty_percent == 0)
     {
-      digitalWrite(_pin, LOW);
-      core_util_critical_section_enter();
-      _stateOn = false;
-      core_util_critical_section_exit();
+      if (_output_state)
+      {
+        _output_state = false;
+        digitalWrite(_pin, LOW);
+      }
       return;
     }
 
-    if (d >= 100)
+    if (_duty_percent >= 100)
     {
-      digitalWrite(_pin, HIGH);
-      core_util_critical_section_enter();
-      _stateOn = true;
-      core_util_critical_section_exit();
+      if (!_output_state)
+      {
+        _output_state = true;
+        digitalWrite(_pin, HIGH);
+      }
       return;
     }
 
-    // štart vždy ON
-    digitalWrite(_pin, HIGH);
+    uint32_t now = millis();
 
-    core_util_critical_section_enter();
-    _stateOn = true;
-    core_util_critical_section_exit();
+    uint32_t on_time  = (_period_ms * _duty_percent) / 100UL;
+    uint32_t off_time = _period_ms - on_time;
 
-    scheduleNext(ton);
-  }
-
-  void scheduleNext(uint32_t delay_ms)
-  {
-    if (delay_ms == 0) delay_ms = 1;
-
-    _timeout.attach(
-      mbed::callback(this, &PWMEngine::onTimeout),
-      std::chrono::milliseconds(delay_ms)
-    );
-  }
-
-  void onTimeout()
-  {
-    core_util_critical_section_enter();
-
-    bool en = _enabled;
-    bool currentState = _stateOn;
-    uint32_t ton  = pwm_time_on;
-    uint32_t toff = pwm_time_off;
-
-    core_util_critical_section_exit();
-
-    if (!en)
+    if (_output_state)
     {
-      digitalWrite(_pin, LOW);
-
-      core_util_critical_section_enter();
-      _stateOn = false;
-      core_util_critical_section_exit();
-      return;
-    }
-
-    if (currentState)
-    {
-      digitalWrite(_pin, LOW);
-
-      core_util_critical_section_enter();
-      _stateOn = false;
-      core_util_critical_section_exit();
-
-      scheduleNext(toff);
+      if ((uint32_t)(now - _last_change) >= on_time)
+      {
+        _output_state = false;
+        _last_change = now;
+        digitalWrite(_pin, LOW);
+      }
     }
     else
     {
-      digitalWrite(_pin, HIGH);
-
-      core_util_critical_section_enter();
-      _stateOn = true;
-      core_util_critical_section_exit();
-
-      scheduleNext(ton);
+      if ((uint32_t)(now - _last_change) >= off_time)
+      {
+        _output_state = true;
+        _last_change = now;
+        digitalWrite(_pin, HIGH);
+      }
     }
   }
-};
 
-#endif
+private:
+  uint8_t _pin;
+
+  bool _enabled = false;
+  bool _output_state = false;
+
+  uint8_t _duty_percent = 0;
+  uint32_t _period_ms = 5000;
+  uint32_t _last_change = 0;
+};

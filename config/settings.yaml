@@ -47,8 +47,8 @@ channels:
   t3: { name: "Teplota generatora vystup(out) sekundar", unit: "°C" }
   t4: { name: "Teplota generatora vstup(in) sekundar", unit: "°C" }
   t5: { name: "Teplota kondenzatora vstup(in) sekundar", unit: "°C" }
-  t6: { name: "Teplota generatora primar", unit: "°C" }
-  t7: { name: "Teplota vyparnika primar", unit: "°C" }
+  t6: { name: "Studena voda", unit: "°C" }
+  t7: { name: "Tepla voda", unit: "°C" }
   t8: { name: "Teplota vyparnika vstup(in) sekundar", unit: "°C" }
 
   # --- Tlaky ---
@@ -92,12 +92,12 @@ relay:
   names:
     r1: "ENABLE PWM (FIXED)"
     r2: "ENABLE PID (FIXED)"
-    r3: "Valve 223"
+    r3: "Studena"
     r4: "Heater54"
-    r5: "Spare 1"
-    r6: "Spare 852"
-    r7: "Spare 3"
-    r8: "NA"
+    r5: "Tepla"
+    r6: "Vrtula"
+    r7: "Cerpadlo"
+    #r8: "NA"
      # ----------------------------------------
   # RIADENIE RELÉ
   # ----------------------------------------
@@ -106,7 +106,7 @@ relay:
 
     # ---- R1 AUTO ----
     r1:
-      mode: auto
+      mode: manual
       logic: OR
       
 
@@ -118,14 +118,14 @@ relay:
             to:   "08:00"
           conditions:
             - { source: t1, min: 5, max: 30, hyst: 1 }
-            - { source: p8, min: 110, max: 150, hyst: 1 }
+            - { source: p7, min: 110, max: 150, hyst: 1 }
 
         # pravidlo 2 (OR vetva)
         - time:
             from: "06:00"
             to:   "22:00"
           conditions:
-            - { source: p8, min: 80, max: 200, hyst: 2 }
+            - { source: p7, min: 80, max: 250, hyst: 2 }
 
     # ---- R2 MANUAL ----
     r2:
@@ -135,14 +135,8 @@ relay:
       mode: manual
 
     r4:
-      mode: auto
-      logic: OR
-      rules:
-        - time:
-            from: "00:00"
-            to: "24:00"
-          conditions:
-            - { source: t3, min: 5, max: 25, hyst: 0.5 }
+      mode: manual
+ 
 
     r5:
       mode: manual
@@ -168,10 +162,10 @@ pwm:
     unit: "ms"
 
   duty:
-    default: 50
+    default: 12.8
     min: 0
     max: 100
-    step: 1
+    step: 0.1
     unit: "%"
 
 # ------------------------

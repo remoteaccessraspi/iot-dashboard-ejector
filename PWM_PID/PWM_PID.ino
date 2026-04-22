@@ -29,10 +29,14 @@ constexpr auto postDelayBR = bitduration * 9.6f * wordlen * 3.0f * 1e6;
 
 
 // ---------------- OUTPUTS ----------------
+//
+// Overené zapojenie:
+// D2 = OPEN  = viac studenej = POS rastie k 100
+// D1 = CLOSE = viac horúcej  = POS klesá k 0
 
 #define DO_PWM         D0
-#define DO_VALVE_OPEN  D1
-#define DO_VALVE_CLOSE D2
+#define DO_VALVE_OPEN  D2
+#define DO_VALVE_CLOSE D1
 
 
 // ---------------- COILS ----------------
@@ -64,9 +68,9 @@ constexpr auto postDelayBR = bitduration * 9.6f * wordlen * 3.0f * 1e6;
 uint16_t pwm_period = 5000;
 uint16_t pwm_duty   = 0;
 
-uint16_t t_set  = 400;
-uint16_t t_full = 120;
-uint16_t t_move = 10;
+uint16_t t_set  = 400;   // 40.0 °C
+uint16_t t_full = 120;   // s
+uint16_t t_move = 10;    // s
 
 int16_t t_hot  = 0;
 int16_t t_cold = 0;
@@ -84,17 +88,12 @@ PIDEngine valve;
 
 // ---------------- FILTER ----------------
 
-float f_hot  = 0;
-float f_cold = 0;
-float f_mix  = 0;
+float f_hot  = 0.0f;
+float f_cold = 0.0f;
+float f_mix  = 0.0f;
 
-const float alpha = 0.1;
-
-
-// ---------------- DEBUG ----------------
-
-uint16_t prev_pwm   = 65535;
-uint16_t prev_valve = 65535;
+const float alpha = 0.1f;
+bool temp_initialized = false;
 
 
 // ------------------------------------------------
@@ -105,13 +104,15 @@ float readTemp(uint8_t pin)
 {
   uint32_t sum = 0;
 
-  for (int i = 0; i < 5; i++)
+  for (int i = 0; i < 16; i++)
     sum += analogRead(pin);
 
-  float raw = sum / 5.0f;
+  float raw = sum / 16.0f;
 
-  //return (raw / 1023.0f) * 150.0f - 50.0f;
-  return (raw);
+  // kalibrácia:
+  // 1633 -> 17.4 °C
+  // 2385 -> 48.7 °C
+  return raw * 0.04162f - 50.5f;
 }
 
 
@@ -134,14 +135,17 @@ void setup()
   Serial.begin(115200);
   delay(2000);
 
-  Serial.println("OPTA boot OK");
+  Serial.println("[MAIN] OPTA boot OK");
 
   analogReadResolution(12);
 
   RS485.setDelays(preDelayBR, postDelayBR);
 
   if (!ModbusRTUServer.begin(SLAVE_ID, baudrate, SERIAL_8N1))
+  {
+    Serial.println("[MAIN] ModbusRTUServer.begin FAILED");
     while (1);
+  }
 
   ModbusRTUServer.configureHoldingRegisters(0x00, 10);
   ModbusRTUServer.configureInputRegisters(0x00, 10);
@@ -152,14 +156,23 @@ void setup()
   valve.begin(DO_VALVE_OPEN, DO_VALVE_CLOSE);
   valve.setTiming(t_full);
   valve.setMoveTime(t_move);
+  valve.setDeadband(0.5f);
 
+  valve.setHotSoakTime(20);
+  valve.setColdSoakTime(20);
+
+  valve.setFastSettleTime(3000);
+  valve.setRegSettleTime(4000);
+
+  valve.setCentering(true);
   valve.reset();
 
+  digitalWrite(DO_PWM, LOW);
   digitalWrite(DO_VALVE_OPEN, LOW);
   digitalWrite(DO_VALVE_CLOSE, LOW);
 
-  Serial.println("Controller ready");
-}   // ✅ TOTO CHÝBALO
+  Serial.println("[MAIN] Controller ready");
+}
 
 
 // ------------------------------------------------
@@ -176,9 +189,19 @@ void loop()
   float Tc = readTemp(AI_T_COLD);
   float Tm = readTemp(AI_T_MIX);
 
-  f_hot  = filter(f_hot, Th);
-  f_cold = filter(f_cold, Tc);
-  f_mix  = filter(f_mix, Tm);
+  if (!temp_initialized)
+  {
+    f_hot = Th;
+    f_cold = Tc;
+    f_mix = Tm;
+    temp_initialized = true;
+  }
+  else
+  {
+    f_hot  = filter(f_hot, Th);
+    f_cold = filter(f_cold, Tc);
+    f_mix  = filter(f_mix, Tm);
+  }
 
   t_hot  = (int16_t)(f_hot * 10.0f);
   t_cold = (int16_t)(f_cold * 10.0f);
@@ -223,41 +246,11 @@ void loop()
   float Tmix = t_mix / 10.0f;
 
   valve.process(Tset, Tmix, enable_pid);
-
   valve_position = valve.getPosition();
-
-  // ---------------- DEBUG (FIXED) ----------------
-
-  static uint32_t last = 0;
-  uint32_t now = millis();
-
-  if ((int32_t)(now - last) >= 1000)
-  {
-    last = now;
-
-    Serial.print("Th=");
-    Serial.print(t_hot / 10.0f);
-
-    Serial.print(" Tc=");
-    Serial.print(t_cold / 10.0f);
-
-    Serial.print(" Tm=");
-    Serial.print(t_mix / 10.0f);
-
-    Serial.print(" POS=");
-    Serial.print(valve_position);
-
-    Serial.print(" PWM=");
-    Serial.println(pwm_duty);
-
-    Serial.print(" Tm raw data=");
-    Serial.println(Tm);
-  }
 
   // ---------------- STATUS ----------------
 
   status_flags = 0;
-
   if (enable_pwm) status_flags |= 1;
   if (enable_pid) status_flags |= 2;
 
@@ -266,7 +259,56 @@ void loop()
   ModbusRTUServer.inputRegisterWrite(REG_T_HOT, t_hot);
   ModbusRTUServer.inputRegisterWrite(REG_T_COLD, t_cold);
   ModbusRTUServer.inputRegisterWrite(REG_T_MIX, t_mix);
-
   ModbusRTUServer.inputRegisterWrite(REG_VALVE_POS, valve_position);
   ModbusRTUServer.inputRegisterWrite(REG_STATUS, status_flags);
+
+  // ---------------- DEBUG ----------------
+
+  static uint32_t last = 0;
+  uint32_t now = millis();
+
+  if ((int32_t)(now - last) >= 1000)
+  {
+    last = now;
+
+    Serial.print("[MAIN] t=");
+    Serial.print(now / 1000.0f, 1);
+    Serial.print("s");
+
+    Serial.print(" ThRaw=");
+    Serial.print(Th, 2);
+
+    Serial.print(" TcRaw=");
+    Serial.print(Tc, 2);
+
+    Serial.print(" TmRaw=");
+    Serial.print(Tm, 2);
+
+    Serial.print(" Th=");
+    Serial.print(t_hot / 10.0f, 1);
+
+    Serial.print(" Tc=");
+    Serial.print(t_cold / 10.0f, 1);
+
+    Serial.print(" Tm=");
+    Serial.print(t_mix / 10.0f, 1);
+
+    Serial.print(" Tset=");
+    Serial.print(Tset, 1);
+
+    Serial.print(" PWMen=");
+    Serial.print(enable_pwm ? 1 : 0);
+
+    Serial.print(" PWM=");
+    Serial.print(pwm_duty);
+
+    Serial.print(" PIDen=");
+    Serial.print(enable_pid ? 1 : 0);
+
+    Serial.print(" POS=");
+    Serial.print(valve_position);
+
+    Serial.print(" ST=");
+    Serial.println(status_flags);
+  }
 }
