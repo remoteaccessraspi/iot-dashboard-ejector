@@ -42,11 +42,11 @@ database:
 channels:
 
   # --- Teploty ---
-  t1: { name: "Teplota kondenzatora vystup(out) sekundar", unit: "°C" }
-  t2: { name: "Teplota vyparnika vystup(out) sekundar", unit: "°C" }
-  t3: { name: "Teplota generatora vystup(out) sekundar", unit: "°C" }
-  t4: { name: "Teplota generatora vstup(in) sekundar", unit: "°C" }
-  t5: { name: "Teplota kondenzatora vstup(in) sekundar", unit: "°C" }
+  t1: { name: "Teplota kondenzatora vstup(in) sekundar", unit: "°C" }
+  t2: { name: "Teplota vyparnika vystup(in) sekundar", unit: "°C" }
+  t3: { name: "Teplota generatora vstup(in) sekundar", unit: "°C" }
+  t4: { name: "Teplota generatora vystup(out) sekundar", unit: "°C" }
+  t5: { name: "Teplota kondenzatora vystup(out) sekundar", unit: "°C" }
   t6: { name: "Studena voda", unit: "°C" }
   t7: { name: "Tepla voda", unit: "°C" }
   t8: { name: "Teplota vyparnika vstup(in) sekundar", unit: "°C" }
@@ -56,7 +56,7 @@ channels:
   p2: { name: "NA", unit: "Pa" }
   p3: { name: "NA", unit: "Pa" }
   p4: { name: "NA", unit: "Pa" }
-  p5: { name: "Kondenyacny tlak", unit: "kPa" }
+  p5: { name: "Kondenzacny tlak", unit: "kPa" }
   p6: { name: "Generacny tlak", unit: "kPa" }
   p7: { name: "Vyparny tlak", unit: "kPa" }
   p8: { name: "NA", unit: "kPa" }
@@ -92,12 +92,12 @@ relay:
   names:
     r1: "ENABLE PWM (FIXED)"
     r2: "ENABLE PID (FIXED)"
-    r3: "Studena"
-    r4: "Heater54"
-    r5: "Tepla"
-    r6: "Vrtula"
-    r7: "Cerpadlo"
-    #r8: "NA"
+    r3: "NA"
+    r4: "NA"
+    r5: "NA"
+    r6: "Chladiaca veža"
+    r7: "Cerpadlo v okruhu chladiaceho stroja"
+    r8: "NA"
      # ----------------------------------------
   # RIADENIE RELÉ
   # ----------------------------------------
