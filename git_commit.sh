@@ -34,13 +34,17 @@ if [ -z "$LAST_TAG" ]; then
     SUGGESTED="v1.0.0"
 else
     VER=${LAST_TAG#v}
+
     IFS='.' read -r MAJOR MINOR PATCH <<< "$VER"
-    PATCH=$((PATCH+1))
+
+    PATCH=$((PATCH + 1))
+
     SUGGESTED="v${MAJOR}.${MINOR}.${PATCH}"
 fi
 
 echo ""
 echo "Last tag: ${LAST_TAG:-none}"
+
 read -p "Create release tag? [${SUGGESTED}] (ENTER=skip): " TAG
 
 if [ -z "$TAG" ]; then
@@ -49,7 +53,7 @@ if [ -z "$TAG" ]; then
 fi
 
 if [[ "$TAG" != v* ]]; then
-  TAG="v$TAG"
+    TAG="v$TAG"
 fi
 
 echo "Creating tag $TAG"
