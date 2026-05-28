@@ -47,8 +47,8 @@ channels:
   t3: { name: "Teplota generatora vstup(in) sekundar", unit: "°C" }
   t4: { name: "Teplota generatora vystup(out) sekundar", unit: "°C" }
   t5: { name: "Teplota kondenzatora vystup(out) sekundar", unit: "°C" }
-  t6: { name: "Studena voda", unit: "°C" }
-  t7: { name: "Tepla voda", unit: "°C" }
+  t6: { name: "Vstup Teplej vody", unit: "°C" }
+  t7: { name: "Vstup Studenej vody", unit: "°C" }
   t8: { name: "Teplota vyparnika vstup(in) sekundar", unit: "°C" }
 
   # --- Tlaky ---

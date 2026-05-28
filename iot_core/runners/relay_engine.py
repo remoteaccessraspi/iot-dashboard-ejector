@@ -75,7 +75,7 @@ def time_ok(rule_time, now):
 # CONDITIONS
 # --------------------------------------------------
 
-def cond_ok(cond, data):
+def cond_ok(cond, data, prev_state):
     src = cond.get("source")
     if not src:
         return False
@@ -85,10 +85,23 @@ def cond_ok(cond, data):
     if val is None:
         return False
 
-    if "min" in cond and val < cond["min"]:
+    min_v = cond.get("min")
+    max_v = cond.get("max")
+    hyst = float(cond.get("hyst", 0) or 0)
+
+    # OFF -> ON len v základnom intervale min..max
+    # ON -> OFF až po opustení rozšíreného pásma (hysterézia)
+    if int(prev_state or 0) == 0:
+        low = min_v
+        high = max_v
+    else:
+        low = None if min_v is None else (min_v - hyst)
+        high = None if max_v is None else (max_v + hyst)
+
+    if low is not None and val < low:
         return False
 
-    if "max" in cond and val > cond["max"]:
+    if high is not None and val > high:
         return False
 
     return True
@@ -162,7 +175,7 @@ def set_relay_source_only_if_auto(conn, name, new_source="hmi"):
 # RELAY EVALUATION
 # --------------------------------------------------
 
-def eval_relay(rcfg, data, now):
+def eval_relay(rcfg, data, now, prev_state=0):
     logic = str(rcfg.get("logic", "OR")).upper()
     rules = rcfg.get("rules", [])
 
@@ -173,7 +186,7 @@ def eval_relay(rcfg, data, now):
 
     for rule in rules:
         t_ok = time_ok(rule.get("time"), now)
-        c_ok = all(cond_ok(c, data) for c in rule.get("conditions", []))
+        c_ok = all(cond_ok(c, data, prev_state) for c in rule.get("conditions", []))
         active = t_ok and c_ok
 
         if logic == "OR":
@@ -260,11 +273,17 @@ def main():
 
             # auto režim
             try:
-                final = eval_relay(rcfg, data, now)
                 row = get_relay_row(conn, name)
 
                 old_state = int(row["state"]) if row and row.get("state") is not None else None
                 old_source = row.get("source") if row else None
+                prev_state = old_state if old_state is not None else 0
+                final = eval_relay(rcfg, data, now, prev_state=prev_state)
+                print(
+                    f"{name} hysteresis context: "
+                    f"prev_state={prev_state} "
+                    f"({'ON-band' if prev_state == 1 else 'OFF-band'})"
+                )
 
                 # zapisuj len keď sa niečo zmenilo
                 if old_state != final or old_source != "auto":
