@@ -66,7 +66,7 @@ channels:
   i2: { name: "NA", unit: "mA" }
   i3: { name: "NA", unit: "mA" }
   i4: { name: "NA", unit: "mA" }
-  i5: { name: "Kondenyacny tlak", unit: "mA" }
+  i5: { name: "Kondenzacny tlak", unit: "mA" }
   i6: { name: "Generacny tlak", unit: "mA" }
   i7: { name: "Vyparny tlak", unit: "mA" }
   i8: { name: "NA", unit: "mA" }
@@ -90,7 +90,7 @@ relay:
   count: 8
   default_state: 0
   names:
-    r1: "ENABLE PWM (FIXED)"
+    r1: "Expanzný ventil"
     r2: "ENABLE PID (FIXED)"
     r3: "NA"
     r4: "NA"
@@ -101,6 +101,7 @@ relay:
      # ----------------------------------------
   # RIADENIE RELÉ
   # ----------------------------------------
+
 
   control:
 
@@ -114,18 +115,11 @@ relay:
 
         # pravidlo 1 (AND podmienky)
         - time:
-            from: "06:00"
-            to:   "08:00"
+            from: "00:00"
+            to:   "24:00"
           conditions:
-            - { source: t1, min: 5, max: 30, hyst: 1 }
-            - { source: p7, min: 110, max: 150, hyst: 1 }
+            - { source: t3, min: 66, max: 100, hyst: 2.5 }
 
-        # pravidlo 2 (OR vetva)
-        - time:
-            from: "06:00"
-            to:   "22:00"
-          conditions:
-            - { source: p7, min: 80, max: 250, hyst: 2 }
 
     # ---- R2 MANUAL ----
     r2:
@@ -143,9 +137,31 @@ relay:
 
     r6:
       mode: manual
+      logic: OR
+      
+
+      rules:
+
+        # pravidlo 1 (AND podmienky)
+        - time:
+            from: "00:00"
+            to:   "24:00"
+          conditions:
+            - { source: p5, min: 266.805, max: 10000, hyst: 23.513 }
 
     r7:
       mode: manual
+      logic: OR
+      
+
+      rules:
+
+        # pravidlo 1 (AND podmienky)
+        - time:
+            from: "00:00"
+            to:   "24:00"
+          conditions:
+            - { source: t3, min: 66, max: 100, hyst: 2.5 }
 
     r8:
       mode: manual
