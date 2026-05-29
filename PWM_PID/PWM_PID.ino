@@ -112,7 +112,7 @@ float readTemp(uint8_t pin)
   // kalibrácia:
   // 1633 -> 17.4 °C
   // 2385 -> 48.7 °C
-  return raw * 0.04162f - 50.5f;
+  return raw * 0.04162f - 50.0f;
 }
 
 
